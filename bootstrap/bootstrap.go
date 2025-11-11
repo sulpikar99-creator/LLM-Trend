@@ -8,6 +8,7 @@ import (
 	"github.com/sulpikar99-creator/LLM-Trend/config"
 	"github.com/sulpikar99-creator/LLM-Trend/crypto"
 	"github.com/sulpikar99-creator/LLM-Trend/logger"
+	"github.com/sulpikar99-creator/LLM-Trend/manager"
 )
 
 // Application holds all initialized components
@@ -16,6 +17,7 @@ type Application struct {
 	Database      *config.Database
 	Logger        *logger.Logger
 	CryptoService *crypto.Service
+	TraderManager *manager.TraderManager
 }
 
 // Initialize sets up the application and all its components
@@ -48,11 +50,15 @@ func Initialize() (*Application, error) {
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
+	// Initialize trader manager
+	traderMgr := manager.NewTraderManager()
+
 	app := &Application{
 		Config:        cfg,
 		Database:      db,
 		Logger:        appLogger,
 		CryptoService: cryptoService,
+		TraderManager: traderMgr,
 	}
 
 	log.Println("Application initialized successfully")
