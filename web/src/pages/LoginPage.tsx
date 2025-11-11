@@ -7,6 +7,7 @@ export default function LoginPage() {
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [betaCode, setBetaCode] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -22,7 +23,7 @@ export default function LoginPage() {
       if (isLogin) {
         await login(username, password)
       } else {
-        await register(username, email, password)
+        await register(username, email, password, betaCode)
       }
       navigate('/')
     } catch (err: any) {
@@ -98,6 +99,23 @@ export default function LoginPage() {
                 className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
+
+            {!isLogin && (
+              <div>
+                <label htmlFor="betaCode" className="block text-sm font-medium mb-2">
+                  Beta Code (Optional)
+                </label>
+                <input
+                  id="betaCode"
+                  name="betaCode"
+                  type="text"
+                  value={betaCode}
+                  onChange={(e) => setBetaCode(e.target.value)}
+                  placeholder="Enter beta code if you have one"
+                  className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary placeholder:text-gray-500"
+                />
+              </div>
+            )}
           </div>
 
           <button

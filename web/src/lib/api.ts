@@ -46,12 +46,17 @@ export const api = {
       }
     ),
 
-  register: (username: string, email: string, password: string) =>
+  register: (username: string, email: string, password: string, betaCode?: string) =>
     fetchApi<{ token: string; user_id: string; username: string; role: string }>(
       '/auth/register',
       {
         method: 'POST',
-        body: JSON.stringify({ username, email, password }),
+        body: JSON.stringify({
+          username,
+          email,
+          password,
+          ...(betaCode && { beta_code: betaCode })
+        }),
       }
     ),
 
