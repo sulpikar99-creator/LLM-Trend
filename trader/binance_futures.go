@@ -28,6 +28,7 @@ type BinanceFuturesTrader struct {
 	baseURL    string
 	httpClient *http.Client
 	connected  bool
+	testnet    bool
 	mu         sync.RWMutex
 }
 
@@ -43,6 +44,7 @@ func NewBinanceFuturesTrader(name, apiKey, apiSecret string, testnet bool) *Bina
 		apiKey:    apiKey,
 		apiSecret: apiSecret,
 		baseURL:   baseURL,
+		testnet:   testnet,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -58,6 +60,13 @@ func (b *BinanceFuturesTrader) GetName() string {
 // GetExchangeType returns the exchange type
 func (b *BinanceFuturesTrader) GetExchangeType() string {
 	return "binance_futures"
+}
+
+// IsTestnet reports whether the trader is configured to use the Binance testnet
+func (b *BinanceFuturesTrader) IsTestnet() bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.testnet
 }
 
 // Connect establishes connection to Binance Futures

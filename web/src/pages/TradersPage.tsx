@@ -3,12 +3,18 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { api } from '../lib/api'
 
+const DEFAULT_SYMBOL = 'BTCUSDT'
+const DEFAULT_INTERVAL = '1h'
+
 interface Trader {
   id: string
   name: string
-  exchange_type: string
-  status: string
-  created_at: string
+  exchange?: string
+  exchange_type?: string
+  status?: string
+  connected?: boolean
+  testnet?: boolean
+  created_at?: string
 }
 
 export default function TradersPage() {
@@ -35,7 +41,10 @@ export default function TradersPage() {
     try {
       setLoading(true)
       const response = await api.listTraders()
-      setTraders(response.data || [])
+      const traderList = Array.isArray(response.data?.traders)
+        ? (response.data.traders as Trader[])
+        : []
+      setTraders(traderList)
     } catch (err: any) {
       setError(err.message || 'Failed to load traders')
     } finally {
@@ -52,15 +61,21 @@ export default function TradersPage() {
       await api.createTrader({
         name: traderName,
         exchange_type: exchangeType,
+        api_key: apiKey,
+        api_secret: apiSecret,
+        testnet: useTestnet,
         exchange_config: {
           api_key: apiKey,
           api_secret: apiSecret,
           testnet: useTestnet
-        }
+        },
+        symbol: DEFAULT_SYMBOL,
+        interval: DEFAULT_INTERVAL
       })
 
       setShowCreateModal(false)
       setTraderName('')
+      setExchangeType('binance_futures')
       setApiKey('')
       setApiSecret('')
       setUseTestnet(true)
@@ -74,7 +89,10 @@ export default function TradersPage() {
 
   const handleStartTrader = async (id: string) => {
     try {
-      await api.startTrader(id)
+      await api.startTrader(id, {
+        symbol: DEFAULT_SYMBOL,
+        interval: DEFAULT_INTERVAL
+      })
       loadTraders()
     } catch (err: any) {
       setError(err.message || 'Failed to start trader')
@@ -191,7 +209,16 @@ export default function TradersPage() {
                 <div className="flex justify-between items-start mb-4">
                   <div>
                     <h3 className="text-xl font-bold">{trader.name}</h3>
-                    <p className="text-sm text-gray-400">{trader.exchange_type}</p>
+                    <div className="flex items-center space-x-2 mt-1">
+                      <p className="text-sm text-gray-400">
+                        {trader.exchange || trader.exchange_type || 'Unknown exchange'}
+                      </p>
+                      {trader.testnet && (
+                        <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 text-xs font-medium rounded">
+                          Testnet
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <span
                     className={`px-3 py-1 rounded text-sm ${
@@ -200,7 +227,7 @@ export default function TradersPage() {
                         : 'bg-gray-500/20 text-gray-400'
                     }`}
                   >
-                    {trader.status}
+                    {trader.status ?? 'unknown'}
                   </span>
                 </div>
 

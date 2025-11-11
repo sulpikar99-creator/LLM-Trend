@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
@@ -21,7 +20,7 @@ import (
 type TraderStatus string
 
 const (
-	TraderStatusStopped TraderStatus = "stopped"
+	TraderStatusStopped  TraderStatus = "stopped"
 	TraderStatusStarting TraderStatus = "starting"
 	TraderStatusRunning  TraderStatus = "running"
 	TraderStatusStopping TraderStatus = "stopping"
@@ -48,6 +47,7 @@ type ManagedTrader struct {
 	MaxPositionUSD   float64
 	MaxLeverage      int
 	DB               *sql.DB // Database connection for stats
+	Testnet          bool
 	ctx              context.Context
 	cancel           context.CancelFunc
 	mu               sync.RWMutex
@@ -100,6 +100,10 @@ func (tm *TraderManager) AddTrader(id, userID string, t trader.Trader) (*Managed
 		DB:     tm.db,
 		ctx:    ctx,
 		cancel: cancel,
+	}
+
+	if tester, ok := interface{}(t).(interface{ IsTestnet() bool }); ok {
+		mt.Testnet = tester.IsTestnet()
 	}
 
 	tm.traders[id] = mt
@@ -203,15 +207,7 @@ func (tm *TraderManager) StartTrader(id, symbol, interval string) error {
 		mt.Symbol = symbol
 
 		// Determine if testnet based on exchange config or trader implementation
-		testnet := false
-
-		// Try to detect from BinanceFuturesTrader baseURL
-		if bf, ok := mt.Trader.(*trader.BinanceFuturesTrader); ok {
-			// Access private field through reflection or use type assertion
-			// For now, check exchange type name
-			exchType := bf.GetExchangeType()
-			testnet = strings.Contains(strings.ToLower(exchType), "testnet")
-		}
+		testnet := mt.Testnet
 
 		// If we have database access, try to get from exchange_config
 		if !testnet && mt.DB != nil {
@@ -295,6 +291,7 @@ func (mt *ManagedTrader) GetInfo() map[string]interface{} {
 		"exchange":  mt.Trader.GetExchangeType(),
 		"status":    string(mt.Status),
 		"connected": mt.Trader.IsConnected(),
+		"testnet":   mt.Testnet,
 	}
 
 	if mt.ErrorMessage != "" {
