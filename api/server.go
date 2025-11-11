@@ -78,6 +78,7 @@ func (s *Server) setupRoutes() {
 		// Decision log routes
 		protected.GET("/decisions/:trader_id", s.handleGetDecisions)
 		protected.GET("/decisions/:trader_id/:cycle", s.handleGetDecisionByCycle)
+		protected.DELETE("/decisions/:trader_id/old", s.handleDeleteOldDecisions)
 
 		// Config routes
 		protected.GET("/config", s.handleGetConfig)
