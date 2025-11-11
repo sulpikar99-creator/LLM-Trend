@@ -40,29 +40,71 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const login = async (username: string, password: string) => {
-    const response = await api.login(username, password)
-    const { token: newToken, user_id, username: uname, role } = response.data
+    try {
+      const response = await api.login(username, password)
 
-    const newUser = { user_id, username: uname, role }
+      // Validate response data exists
+      if (!response?.data) {
+        throw new Error('Invalid response from server')
+      }
 
-    setToken(newToken)
-    setUser(newUser)
+      const { token: newToken, user_id, username: uname, role } = response.data
 
-    localStorage.setItem('token', newToken)
-    localStorage.setItem('user', JSON.stringify(newUser))
+      // Validate all required fields are present
+      if (!newToken || !user_id || !uname || !role) {
+        throw new Error('Incomplete user data received from server')
+      }
+
+      const newUser = { user_id, username: uname, role }
+
+      // Update state only after successful validation
+      setToken(newToken)
+      setUser(newUser)
+
+      localStorage.setItem('token', newToken)
+      localStorage.setItem('user', JSON.stringify(newUser))
+    } catch (error) {
+      // Clear any partial state on error
+      setToken(null)
+      setUser(null)
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      throw error // Re-throw to allow caller to handle
+    }
   }
 
   const register = async (username: string, email: string, password: string, betaCode?: string) => {
-    const response = await api.register(username, email, password, betaCode)
-    const { token: newToken, user_id, username: uname, role } = response.data
+    try {
+      const response = await api.register(username, email, password, betaCode)
 
-    const newUser = { user_id, username: uname, role }
+      // Validate response data exists
+      if (!response?.data) {
+        throw new Error('Invalid response from server')
+      }
 
-    setToken(newToken)
-    setUser(newUser)
+      const { token: newToken, user_id, username: uname, role } = response.data
 
-    localStorage.setItem('token', newToken)
-    localStorage.setItem('user', JSON.stringify(newUser))
+      // Validate all required fields are present
+      if (!newToken || !user_id || !uname || !role) {
+        throw new Error('Incomplete user data received from server')
+      }
+
+      const newUser = { user_id, username: uname, role }
+
+      // Update state only after successful validation
+      setToken(newToken)
+      setUser(newUser)
+
+      localStorage.setItem('token', newToken)
+      localStorage.setItem('user', JSON.stringify(newUser))
+    } catch (error) {
+      // Clear any partial state on error
+      setToken(null)
+      setUser(null)
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      throw error // Re-throw to allow caller to handle
+    }
   }
 
   const logout = () => {

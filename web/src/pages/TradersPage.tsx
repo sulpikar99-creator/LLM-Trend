@@ -59,6 +59,8 @@ export default function TradersPage() {
         }
       })
 
+      // Clear error on success
+      setError('')
       setShowCreateModal(false)
       setTraderName('')
       setApiKey('')
@@ -75,6 +77,7 @@ export default function TradersPage() {
   const handleStartTrader = async (id: string) => {
     try {
       await api.startTrader(id)
+      setError('') // Clear error on success
       loadTraders()
     } catch (err: any) {
       setError(err.message || 'Failed to start trader')
@@ -84,6 +87,7 @@ export default function TradersPage() {
   const handleStopTrader = async (id: string) => {
     try {
       await api.stopTrader(id)
+      setError('') // Clear error on success
       loadTraders()
     } catch (err: any) {
       setError(err.message || 'Failed to stop trader')
@@ -95,6 +99,7 @@ export default function TradersPage() {
 
     try {
       await api.deleteTrader(id)
+      setError('') // Clear error on success
       loadTraders()
     } catch (err: any) {
       setError(err.message || 'Failed to delete trader')
@@ -137,7 +142,7 @@ export default function TradersPage() {
               </div>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-gray-400">Welcome, {user?.username}</span>
+              <span className="text-gray-400">Welcome, {user?.username || 'User'}</span>
               <button
                 onClick={logout}
                 className="px-4 py-2 bg-danger hover:bg-danger/90 text-white rounded"

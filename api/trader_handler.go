@@ -87,13 +87,21 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 		"api_secret_encrypted": apiSecretEncrypted,
 		"testnet":              req.Testnet,
 	}
-	exchangeConfigJSON, _ := json.Marshal(exchangeConfig)
+	exchangeConfigJSON, err := json.Marshal(exchangeConfig)
+	if err != nil {
+		errorResponse(c, http.StatusInternalServerError, "Failed to serialize exchange config")
+		return
+	}
 
 	// Create AI config JSON
 	aiConfig := map[string]interface{}{
 		"model_id": "deepseek-chat", // Default
 	}
-	aiConfigJSON, _ := json.Marshal(aiConfig)
+	aiConfigJSON, err := json.Marshal(aiConfig)
+	if err != nil {
+		errorResponse(c, http.StatusInternalServerError, "Failed to serialize AI config")
+		return
+	}
 
 	// Store in database
 	_, err = s.app.Database.DB.Exec(`

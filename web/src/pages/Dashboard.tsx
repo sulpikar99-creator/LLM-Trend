@@ -123,7 +123,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-gray-400">Welcome, {user?.username}</span>
+              <span className="text-gray-400">Welcome, {user?.username || 'User'}</span>
               <button
                 onClick={logout}
                 className="px-4 py-2 bg-danger hover:bg-danger/90 text-white rounded"

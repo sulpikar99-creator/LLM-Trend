@@ -13,9 +13,11 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	Router      *gin.Engine
-	app         *bootstrap.Application
-	rateLimiter *RateLimiter
+	Router            *gin.Engine
+	app               *bootstrap.Application
+	rateLimiter       *RateLimiter
+	cleanupCtx        context.Context
+	cleanupCancelFunc context.CancelFunc
 }
 
 // NewServer creates a new HTTP server
@@ -37,17 +39,22 @@ func NewServer(app *bootstrap.Application) *Server {
 	router.Use(rateLimiter.RateLimitMiddleware())              // Rate limiting per IP
 	router.Use(RequestSizeLimitMiddleware(10 * 1024 * 1024))   // 10MB request size limit
 
+	// Create cancellable context for cleanup goroutines
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+
 	server := &Server{
-		Router:      router,
-		app:         app,
-		rateLimiter: rateLimiter,
+		Router:            router,
+		app:               app,
+		rateLimiter:       rateLimiter,
+		cleanupCtx:        cleanupCtx,
+		cleanupCancelFunc: cleanupCancel,
 	}
 
 	// Setup routes
 	server.setupRoutes()
 
-	// Start rate limiter cleanup goroutine
-	go rateLimiter.CleanupOldVisitors(context.Background())
+	// Start rate limiter cleanup goroutine with cancellable context
+	go rateLimiter.CleanupOldVisitors(cleanupCtx)
 
 	return server
 }
@@ -174,4 +181,11 @@ func errorResponse(c *gin.Context, statusCode int, message string) {
 		"success": false,
 		"error":   message,
 	})
+}
+
+// Shutdown gracefully stops all server goroutines
+func (s *Server) Shutdown() {
+	if s.cleanupCancelFunc != nil {
+		s.cleanupCancelFunc()
+	}
 }

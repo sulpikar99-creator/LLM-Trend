@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { api } from '../lib/api'
@@ -52,8 +52,18 @@ export default function SettingsPage() {
   // Strategy prompt
   const [strategyPrompt, setStrategyPrompt] = useState('')
 
+  // Timeout refs for cleanup
+  const successTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
   useEffect(() => {
     loadConfig()
+
+    // Cleanup timeout on unmount
+    return () => {
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current)
+      }
+    }
   }, [])
 
   const loadConfig = async () => {
@@ -102,6 +112,11 @@ export default function SettingsPage() {
     setSuccess('')
 
     try {
+      // Validate config exists before spreading
+      if (!config) {
+        throw new Error('Configuration not loaded')
+      }
+
       const updatedConfig = {
         ...config,
         risk_limits: {
@@ -114,7 +129,13 @@ export default function SettingsPage() {
 
       await api.updateConfig(updatedConfig)
       setSuccess('Risk limits updated successfully')
-      setTimeout(() => setSuccess(''), 3000)
+
+      // Clear previous timeout and set new one
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current)
+      }
+      successTimeoutRef.current = setTimeout(() => setSuccess(''), 3000)
+
       loadConfig()
     } catch (err: any) {
       setError(err.message || 'Failed to update risk limits')
@@ -130,12 +151,20 @@ export default function SettingsPage() {
     setSuccess('')
 
     try {
+      // Validate config exists before spreading
+      if (!config) {
+        throw new Error('Configuration not loaded')
+      }
+
+      // Safely format model name
+      const modelName = aiModel ? aiModel.replace(/-/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()) : aiModel
+
       const updatedConfig = {
         ...config,
         ai_models: [
           {
             id: aiModel,
-            name: aiModel.replace('-', ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
+            name: modelName,
             provider: aiProvider,
             api_key_encrypted: aiApiKey,
             base_url: aiBaseUrl,
@@ -147,7 +176,13 @@ export default function SettingsPage() {
 
       await api.updateConfig(updatedConfig)
       setSuccess('AI configuration updated successfully')
-      setTimeout(() => setSuccess(''), 3000)
+
+      // Clear previous timeout and set new one
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current)
+      }
+      successTimeoutRef.current = setTimeout(() => setSuccess(''), 3000)
+
       loadConfig()
     } catch (err: any) {
       setError(err.message || 'Failed to update AI configuration')
@@ -163,6 +198,11 @@ export default function SettingsPage() {
     setSuccess('')
 
     try {
+      // Validate config exists before spreading
+      if (!config) {
+        throw new Error('Configuration not loaded')
+      }
+
       const updatedConfig = {
         ...config,
         default_strategy_prompt: strategyPrompt,
@@ -170,7 +210,13 @@ export default function SettingsPage() {
 
       await api.updateConfig(updatedConfig)
       setSuccess('Strategy prompt updated successfully')
-      setTimeout(() => setSuccess(''), 3000)
+
+      // Clear previous timeout and set new one
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current)
+      }
+      successTimeoutRef.current = setTimeout(() => setSuccess(''), 3000)
+
       loadConfig()
     } catch (err: any) {
       setError(err.message || 'Failed to update strategy prompt')
@@ -215,7 +261,7 @@ export default function SettingsPage() {
               </div>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-gray-400">Welcome, {user?.username}</span>
+              <span className="text-gray-400">Welcome, {user?.username || 'User'}</span>
               <button
                 onClick={logout}
                 className="px-4 py-2 bg-danger hover:bg-danger/90 text-white rounded"

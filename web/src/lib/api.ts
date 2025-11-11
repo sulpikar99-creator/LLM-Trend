@@ -10,29 +10,48 @@ async function fetchApi<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<ApiResponse<T>> {
-  const token = localStorage.getItem('token')
+  try {
+    const token = localStorage.getItem('token')
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string>),
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers && typeof options.headers === 'object' ? options.headers as Record<string, string> : {}),
+    }
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers,
+    })
+
+    // Check response.ok BEFORE parsing JSON
+    if (!response.ok) {
+      // Try to parse error response as JSON, fallback to text
+      let errorMessage = 'Request failed'
+      try {
+        const errorData = await response.json()
+        errorMessage = errorData.error || errorData.message || errorMessage
+      } catch {
+        // If JSON parsing fails, try to get text
+        const errorText = await response.text()
+        errorMessage = errorText || `HTTP ${response.status}: ${response.statusText}`
+      }
+      throw new Error(errorMessage)
+    }
+
+    // Only parse JSON if response is ok
+    const data = await response.json()
+    return data
+  } catch (error) {
+    // Handle network errors and other exceptions
+    if (error instanceof Error) {
+      throw error
+    }
+    throw new Error('Network error or unexpected failure')
   }
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  })
-
-  const data = await response.json()
-
-  if (!response.ok) {
-    throw new Error(data.error || 'Request failed')
-  }
-
-  return data
 }
 
 export const api = {
