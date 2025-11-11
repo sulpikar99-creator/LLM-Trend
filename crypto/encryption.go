@@ -137,11 +137,11 @@ func loadOrGenerateRSAKey() (*rsa.PrivateKey, error) {
 	if fileInfo, err := os.Stat(keyPath); err == nil {
 		// Check if it's actually a file and not a directory
 		if fileInfo.IsDir() {
-			return nil, fmt.Errorf("RSA key path is a directory, not a file")
-		}
-
-		// Check if file is empty
-		if fileInfo.Size() == 0 {
+			fmt.Println("Warning: RSA key path is a directory, removing and regenerating...")
+			os.RemoveAll(keyPath)
+			// Fall through to generate new key
+		} else if fileInfo.Size() == 0 {
+			// Check if file is empty
 			fmt.Println("Warning: RSA key file is empty, regenerating...")
 			os.Remove(keyPath)
 		} else {
