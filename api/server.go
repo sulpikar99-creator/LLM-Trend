@@ -80,6 +80,14 @@ func (s *Server) setupRoutes() {
 		protected.GET("/decisions/:trader_id/:cycle", s.handleGetDecisionByCycle)
 		protected.DELETE("/decisions/:trader_id/old", s.handleDeleteOldDecisions)
 
+		// Risk management routes
+		protected.GET("/risk/:trader_id/config", s.handleGetRiskConfig)
+		protected.PUT("/risk/:trader_id/config", s.handleUpdateRiskConfig)
+		protected.GET("/risk/:trader_id/status", s.handleGetRiskStatus)
+		protected.POST("/risk/:trader_id/reset", s.handleResetRiskMonitor)
+		protected.POST("/risk/:trader_id/calculate-size", s.handleCalculatePositionSize)
+		protected.POST("/risk/:trader_id/calculate-sltp", s.handleCalculateStopLossTakeProfit)
+
 		// Config routes
 		protected.GET("/config", s.handleGetConfig)
 		protected.PUT("/config", s.handleUpdateConfig)

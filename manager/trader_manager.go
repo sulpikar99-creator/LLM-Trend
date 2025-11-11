@@ -10,6 +10,7 @@ import (
 	"github.com/sulpikar99-creator/LLM-Trend/decision"
 	"github.com/sulpikar99-creator/LLM-Trend/logger"
 	"github.com/sulpikar99-creator/LLM-Trend/market"
+	"github.com/sulpikar99-creator/LLM-Trend/risk"
 	"github.com/sulpikar99-creator/LLM-Trend/trader"
 )
 
@@ -26,24 +27,26 @@ const (
 
 // ManagedTrader wraps a trader with management capabilities
 type ManagedTrader struct {
-	ID             string
-	UserID         string
-	Trader         trader.Trader
-	KlineMonitor   *market.KlineMonitor
-	DecisionEngine *decision.DecisionEngine
-	DecisionLogger *logger.DecisionLogger
-	Status         TraderStatus
-	ErrorMessage   string
-	AutoTrading    bool
+	ID              string
+	UserID          string
+	Trader          trader.Trader
+	KlineMonitor    *market.KlineMonitor
+	DecisionEngine  *decision.DecisionEngine
+	DecisionLogger  *logger.DecisionLogger
+	AccountRisk     *risk.AccountRiskMonitor
+	PositionRisk    *risk.PositionRiskManager
+	Status          TraderStatus
+	ErrorMessage    string
+	AutoTrading     bool
 	DecisionInterval time.Duration
-	SystemPrompt   string
-	StrategyPrompt string
-	Symbol         string
-	MaxPositionUSD float64
-	MaxLeverage    int
-	ctx            context.Context
-	cancel         context.CancelFunc
-	mu             sync.RWMutex
+	SystemPrompt    string
+	StrategyPrompt  string
+	Symbol          string
+	MaxPositionUSD  float64
+	MaxLeverage     int
+	ctx             context.Context
+	cancel          context.CancelFunc
+	mu              sync.RWMutex
 }
 
 // TraderManager manages multiple traders
@@ -543,6 +546,48 @@ func (mt *ManagedTrader) executeDecision(ctx context.Context, dec *decision.Trad
 
 // openPosition opens a new position
 func (mt *ManagedTrader) openPosition(ctx context.Context, dec *decision.TradingDecision, side trader.OrderSide) error {
+	// Risk management checks
+	if mt.AccountRisk != nil {
+		// Check if trading is allowed
+		canTrade, reason := mt.AccountRisk.CanTrade()
+		if !canTrade {
+			return fmt.Errorf("risk check failed: %s", reason)
+		}
+
+		// Get current positions
+		positions, err := mt.Trader.GetPositions(ctx)
+		if err != nil {
+			log.Printf("Warning: failed to get positions for risk check: %v", err)
+		}
+
+		totalExposure := 0.0
+		for _, pos := range positions {
+			totalExposure += pos.Notional
+		}
+
+		// Get current market price for size estimation
+		balance, err := mt.Trader.GetBalance(ctx)
+		if err == nil && mt.AccountRisk != nil {
+			mt.AccountRisk.UpdateBalance(balance.Balance)
+		}
+
+		// Estimate position size (using decision size as approximation)
+		positionSizeUSD := dec.Size * 50000.0 // Rough estimate, will be refined
+		canOpen, reason := mt.AccountRisk.CanOpenPosition(positionSizeUSD, len(positions), totalExposure)
+		if !canOpen {
+			return fmt.Errorf("risk check failed: %s", reason)
+		}
+
+		// Validate leverage
+		canUseLeverage, reason := mt.AccountRisk.ValidateLeverage(dec.Symbol, dec.Leverage)
+		if !canUseLeverage {
+			return fmt.Errorf("leverage check failed: %s", reason)
+		}
+
+		// Record trade
+		mt.AccountRisk.RecordTrade()
+	}
+
 	// Set leverage first
 	if err := mt.Trader.SetLeverage(ctx, dec.Symbol, dec.Leverage); err != nil {
 		log.Printf("Warning: failed to set leverage: %v", err)
