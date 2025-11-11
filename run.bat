@@ -4,14 +4,28 @@ setlocal enabledelayedexpansion
 set MODE=%1
 if "%MODE%"=="" set MODE=dev
 
+REM Load environment variables from .env file
+if exist .env (
+    for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
+        set "line=%%a"
+        if not "!line:~0,1!"=="#" (
+            set "%%a=%%b"
+        )
+    )
+)
+
+REM Set default ports if not in .env
+if not defined NOFX_FRONTEND_PORT set NOFX_FRONTEND_PORT=3000
+if not defined NOFX_BACKEND_PORT set NOFX_BACKEND_PORT=8080
+
 if "%MODE%"=="dev" (
     echo.
     echo ========================================
     echo   Starting DEVELOPMENT mode
     echo ========================================
     echo.
-    echo Backend will run on: http://localhost:8080
-    echo Frontend will run on: http://localhost:5173
+    echo Backend will run on: http://localhost:%NOFX_BACKEND_PORT%
+    echo Frontend will run on: http://localhost:%NOFX_FRONTEND_PORT%
     echo.
     echo Starting backend...
     start "LLM-Trend Backend" cmd /c "go run main.go"
@@ -26,10 +40,10 @@ if "%MODE%"=="dev" (
     echo   Started!
     echo ========================================
     echo.
-    echo   Backend: http://localhost:8080
-    echo   Frontend: http://localhost:5173
+    echo   Backend: http://localhost:%NOFX_BACKEND_PORT%
+    echo   Frontend: http://localhost:%NOFX_FRONTEND_PORT%
     echo.
-    echo   Open your browser to: http://localhost:5173
+    echo   Open your browser to: http://localhost:%NOFX_FRONTEND_PORT%
     echo.
     echo   Close the terminal windows to stop
     echo ========================================
@@ -53,7 +67,7 @@ if "%MODE%"=="dev" (
     echo.
     echo Frontend built successfully
     echo.
-    echo Starting backend on: http://localhost:8080
+    echo Starting backend on: http://localhost:%NOFX_BACKEND_PORT%
     echo.
     go run main.go
 
@@ -62,8 +76,12 @@ if "%MODE%"=="dev" (
     echo Usage: run.bat [dev^|prod]
     echo.
     echo Modes:
-    echo   dev  - Development mode ^(frontend on 5173, backend on 8080^)
-    echo   prod - Production mode ^(all on 8080^)
+    echo   dev  - Development mode ^(frontend on %NOFX_FRONTEND_PORT%, backend on %NOFX_BACKEND_PORT%^)
+    echo   prod - Production mode ^(all on %NOFX_BACKEND_PORT%^)
+    echo.
+    echo Port Configuration (.env):
+    echo   NOFX_FRONTEND_PORT=%NOFX_FRONTEND_PORT%
+    echo   NOFX_BACKEND_PORT=%NOFX_BACKEND_PORT%
     echo.
     echo Examples:
     echo   run.bat dev    # Start development mode

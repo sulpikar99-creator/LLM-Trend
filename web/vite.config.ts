@@ -11,14 +11,14 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: parseInt(process.env.NOFX_FRONTEND_PORT || '3000'),
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: `http://localhost:${process.env.NOFX_BACKEND_PORT || '8080'}`,
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:8080',
+        target: `ws://localhost:${process.env.NOFX_BACKEND_PORT || '8080'}`,
         ws: true,
       },
     },
