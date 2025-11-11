@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -192,7 +193,6 @@ func TestBinanceFuturesSignRequest(t *testing.T) {
 	}
 
 	// Convert to url.Values for signing
-	import "net/url"
 	values := url.Values{}
 	for k, v := range params {
 		values.Set(k, v)
