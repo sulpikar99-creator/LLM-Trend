@@ -31,6 +31,15 @@ An advanced AI-powered automated trading platform with multi-exchange support, r
 - ✅ Risk validation and decision execution
 - ✅ Decision log API endpoints
 
+**Phase 4: Analytics Dashboard** ✅ COMPLETED
+
+- ✅ Drawdown analysis with recovery tracking
+- ✅ Monte Carlo simulation engine (VaR, CVaR, confidence intervals)
+- ✅ Correlation matrix computation for multi-symbol analysis
+- ✅ Performance attribution by symbol, strategy, and timeframe
+- ✅ Comprehensive risk metrics (Sharpe, Sortino, Calmar ratios)
+- ✅ Analytics API endpoints with query parameters
+
 ## 🏗️ Architecture
 
 ### Backend Stack
@@ -116,6 +125,7 @@ docker-compose down
 ```
 LLM-Trend/
 ├── main.go                 # Application entry point
+├── analytics/              # Analytics engine
 ├── api/                    # HTTP API handlers
 ├── auth/                   # JWT authentication
 ├── bootstrap/              # Application initialization
@@ -174,11 +184,11 @@ LLM-Trend/
 - `GET /api/decisions/:trader_id/:cycle` - Get decision by cycle
 - `DELETE /api/decisions/:trader_id/old` - Delete old decisions
 
-### Analytics (Coming in Phase 4)
-- `GET /api/analytics/drawdown` - Drawdown analysis
-- `GET /api/analytics/montecarlo` - Monte Carlo simulation
-- `GET /api/analytics/correlation` - Correlation matrix
-- `GET /api/analytics/performance` - Performance metrics
+### Analytics
+- `GET /api/analytics/drawdown` - Drawdown analysis (supports ?trader_id, ?start_date, ?end_date)
+- `GET /api/analytics/montecarlo` - Monte Carlo simulation (supports ?initial_balance, ?num_simulations, ?num_periods)
+- `GET /api/analytics/correlation` - Correlation matrix (supports ?symbols, ?top_n)
+- `GET /api/analytics/performance` - Performance attribution (supports ?trader_id, ?top_n)
 
 ## 🗺️ Development Roadmap
 
@@ -203,10 +213,13 @@ LLM-Trend/
 - [x] Decision logger
 - [x] Prompt templating
 
-### Phase 4: Analytics Dashboard
-- [ ] Backend analytics endpoints
-- [ ] Frontend charts
-- [ ] Risk monitoring
+### Phase 4: Analytics Dashboard ✅
+- [x] Backend analytics endpoints
+- [x] Drawdown analysis
+- [x] Monte Carlo simulation
+- [x] Correlation matrix
+- [x] Performance attribution
+- [x] Risk metrics calculation
 
 ### Phase 5: Risk Management
 - [ ] Account-level controls
