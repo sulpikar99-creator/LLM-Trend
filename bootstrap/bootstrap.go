@@ -50,6 +50,12 @@ func Initialize() (*Application, error) {
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
+	// Initialize beta code manager
+	cfg.BetaCodeManager = config.NewBetaCodeManager(db.DB)
+
+	// Initialize user config manager
+	cfg.UserConfigManager = config.NewUserConfigManager(db.DB)
+
 	// Initialize trader manager
 	traderMgr := manager.NewTraderManager()
 

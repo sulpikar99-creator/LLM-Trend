@@ -52,16 +52,35 @@ func initSchema(db *sql.DB) error {
 		email TEXT UNIQUE NOT NULL,
 		password_hash TEXT NOT NULL,
 		role TEXT NOT NULL DEFAULT 'user',
+		beta_code TEXT,
+		is_active BOOLEAN DEFAULT 1,
+		last_login DATETIME,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS beta_codes (
+		code TEXT PRIMARY KEY,
+		description TEXT,
+		max_uses INTEGER DEFAULT 1,
+		current_uses INTEGER DEFAULT 0,
+		is_active BOOLEAN DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		expires_at DATETIME,
+		created_by TEXT
+	);
+
 	CREATE TABLE IF NOT EXISTS user_configs (
 		user_id TEXT PRIMARY KEY,
-		ai_model_id TEXT,
+		ai_provider TEXT DEFAULT 'openai',
+		ai_model TEXT DEFAULT 'gpt-4',
+		ai_base_url TEXT,
+		ai_api_key TEXT,
+		default_system_prompt TEXT,
+		default_strategy_prompt TEXT,
 		exchange_configs TEXT,
-		system_prompt TEXT,
 		risk_limits TEXT,
+		notification_settings TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -112,6 +131,8 @@ func initSchema(db *sql.DB) error {
 
 	CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 	CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+	CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+	CREATE INDEX IF NOT EXISTS idx_beta_codes_is_active ON beta_codes(is_active);
 	CREATE INDEX IF NOT EXISTS idx_traders_user_id ON traders(user_id);
 	CREATE INDEX IF NOT EXISTS idx_traders_status ON traders(status);
 	CREATE INDEX IF NOT EXISTS idx_decision_records_trader_id ON decision_records(trader_id);

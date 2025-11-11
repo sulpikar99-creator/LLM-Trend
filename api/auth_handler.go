@@ -15,6 +15,7 @@ type RegisterRequest struct {
 	Username string `json:"username" binding:"required,min=3,max=32"`
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=8"`
+	BetaCode string `json:"beta_code"`
 }
 
 // LoginRequest represents a login request
@@ -37,6 +38,16 @@ func (s *Server) handleRegister(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		errorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
+	}
+
+	// Validate beta code if provided
+	betaCodeMgr := s.app.Config.BetaCodeManager
+	if req.BetaCode != "" {
+		valid, msg := betaCodeMgr.ValidateBetaCode(req.BetaCode)
+		if !valid {
+			errorResponse(c, http.StatusBadRequest, "Beta code validation failed: "+msg)
+			return
+		}
 	}
 
 	// Check if username or email already exists
@@ -63,14 +74,37 @@ func (s *Server) handleRegister(c *gin.Context) {
 
 	// Create user
 	userID := uuid.New().String()
+	var betaCodeParam interface{}
+	if req.BetaCode != "" {
+		betaCodeParam = req.BetaCode
+	} else {
+		betaCodeParam = nil
+	}
+
 	_, err = s.app.Database.DB.Exec(
-		`INSERT INTO users (id, username, email, password_hash, role)
-		VALUES (?, ?, ?, ?, ?)`,
-		userID, req.Username, req.Email, string(hashedPassword), "user",
+		`INSERT INTO users (id, username, email, password_hash, role, beta_code)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		userID, req.Username, req.Email, string(hashedPassword), "user", betaCodeParam,
 	)
 	if err != nil {
 		errorResponse(c, http.StatusInternalServerError, "Failed to create user")
 		return
+	}
+
+	// Use beta code if provided
+	if req.BetaCode != "" {
+		if err := betaCodeMgr.UseBetaCode(req.BetaCode); err != nil {
+			// Log error but don't fail registration
+			// User is already created
+			// TODO: Add proper logging
+		}
+	}
+
+	// Create default user config
+	userConfigMgr := s.app.Config.UserConfigManager
+	if err := userConfigMgr.CreateDefaultConfig(userID); err != nil {
+		// Log error but don't fail registration
+		// User can configure later
 	}
 
 	// Generate token

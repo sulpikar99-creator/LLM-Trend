@@ -8,10 +8,12 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	AIModels              []AIModel      `json:"ai_models"`
-	Exchanges             []Exchange     `json:"exchanges"`
-	DefaultStrategyPrompt string         `json:"default_strategy_prompt"`
-	RiskLimits            RiskLimits     `json:"risk_limits"`
+	AIModels              []AIModel          `json:"ai_models"`
+	Exchanges             []Exchange         `json:"exchanges"`
+	DefaultStrategyPrompt string             `json:"default_strategy_prompt"`
+	RiskLimits            RiskLimits         `json:"risk_limits"`
+	BetaCodeManager       *BetaCodeManager   `json:"-"`
+	UserConfigManager     *UserConfigManager `json:"-"`
 }
 
 // AIModel represents an AI model configuration

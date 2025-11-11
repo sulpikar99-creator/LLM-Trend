@@ -91,6 +91,39 @@ func (s *Server) setupRoutes() {
 		// Config routes
 		protected.GET("/config", s.handleGetConfig)
 		protected.PUT("/config", s.handleUpdateConfig)
+
+		// User config routes
+		protected.GET("/user/config", s.handleGetUserConfig)
+		protected.PUT("/user/config", s.handleUpdateUserConfig)
+		protected.GET("/user/config/ai", s.handleGetUserAIConfig)
+		protected.PUT("/user/config/ai", s.handleUpdateUserAIConfig)
+		protected.GET("/user/config/prompts", s.handleGetUserPrompts)
+		protected.PUT("/user/config/prompts", s.handleUpdateUserPrompts)
+		protected.PUT("/user/config/exchange", s.handleUpdateExchangeConfig)
+		protected.PUT("/user/config/risk-limits", s.handleUpdateRiskLimits)
+		protected.PUT("/user/config/notifications", s.handleUpdateNotificationSettings)
+		protected.POST("/user/config/reset", s.handleResetUserConfig)
+		protected.GET("/user/ai-providers", s.handleGetAvailableAIProviders)
+	}
+
+	// Admin routes (require authentication + admin role)
+	admin := s.Router.Group("/api/admin")
+	admin.Use(s.authMiddleware())
+	{
+		// Beta code management
+		admin.POST("/beta-codes", s.handleCreateBetaCode)
+		admin.GET("/beta-codes", s.handleListBetaCodes)
+		admin.GET("/beta-codes/stats", s.handleGetBetaCodeStats)
+		admin.GET("/beta-codes/:code", s.handleGetBetaCode)
+		admin.POST("/beta-codes/:code/deactivate", s.handleDeactivateBetaCode)
+		admin.POST("/beta-codes/:code/reactivate", s.handleReactivateBetaCode)
+		admin.DELETE("/beta-codes/:code", s.handleDeleteBetaCode)
+
+		// User management
+		admin.GET("/users", s.handleListUsers)
+		admin.PUT("/users/:user_id/role", s.handleUpdateUserRole)
+		admin.POST("/users/:user_id/deactivate", s.handleDeactivateUser)
+		admin.POST("/users/:user_id/reactivate", s.handleReactivateUser)
 	}
 }
 
