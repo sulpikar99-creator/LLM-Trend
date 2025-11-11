@@ -80,8 +80,8 @@ export class TradingWebSocket {
   private maxReconnectAttempts: number;
   private reconnectDelay: number;
   private maxReconnectDelay: number;
-  private reconnectTimer: NodeJS.Timeout | null = null;
-  private pingTimer: NodeJS.Timeout | null = null;
+  private reconnectTimer: number | null = null;
+  private pingTimer: number | null = null;
   private debug: boolean;
   private isManualClose = false;
 

@@ -53,7 +53,7 @@ export default function SettingsPage() {
   const [strategyPrompt, setStrategyPrompt] = useState('')
 
   // Timeout refs for cleanup
-  const successTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const successTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
     loadConfig()
