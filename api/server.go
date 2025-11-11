@@ -1,41 +1,51 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"time"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/sulpikar99-creator/LLM-Trend/bootstrap"
 )
 
 // Server represents the HTTP server
 type Server struct {
-	Router *gin.Engine
-	app    *bootstrap.Application
+	Router      *gin.Engine
+	app         *bootstrap.Application
+	rateLimiter *RateLimiter
 }
 
 // NewServer creates a new HTTP server
 func NewServer(app *bootstrap.Application) *Server {
-	router := gin.Default()
+	// Use gin.New() instead of gin.Default() to have full control over middleware
+	router := gin.New()
 
-	// Configure CORS
-	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:5173"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-		MaxAge:           12 * time.Hour,
+	// Create rate limiter (10 requests per second, burst of 20)
+	rateLimiter := NewRateLimiter(10, 20)
+
+	// Apply global middleware in order
+	router.Use(RecoveryMiddleware())                           // Recover from panics
+	router.Use(RequestLoggerMiddleware())                      // Log all requests
+	router.Use(SecurityHeadersMiddleware())                    // Add security headers
+	router.Use(CORSMiddleware([]string{                        // CORS configuration
+		"http://localhost:3000",
+		"http://localhost:5173",
 	}))
+	router.Use(rateLimiter.RateLimitMiddleware())              // Rate limiting per IP
+	router.Use(RequestSizeLimitMiddleware(10 * 1024 * 1024))   // 10MB request size limit
 
 	server := &Server{
-		Router: router,
-		app:    app,
+		Router:      router,
+		app:         app,
+		rateLimiter: rateLimiter,
 	}
 
 	// Setup routes
 	server.setupRoutes()
+
+	// Start rate limiter cleanup goroutine
+	go rateLimiter.CleanupOldVisitors(context.Background())
 
 	return server
 }
@@ -109,6 +119,7 @@ func (s *Server) setupRoutes() {
 	// Admin routes (require authentication + admin role)
 	admin := s.Router.Group("/api/admin")
 	admin.Use(s.authMiddleware())
+	admin.Use(AdminMiddleware())
 	{
 		// Beta code management
 		admin.POST("/beta-codes", s.handleCreateBetaCode)

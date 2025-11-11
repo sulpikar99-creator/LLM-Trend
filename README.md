@@ -21,6 +21,7 @@ An advanced AI-powered automated trading platform with multi-exchange support, r
 - ✅ Technical indicators (RSI, MACD, Bollinger Bands, MA)
 - ✅ Trader manager with lifecycle management
 - ✅ Real-time data streaming
+- ✅ Database-driven analytics (no sample data)
 
 **Phase 3: AI Decision Engine** ✅ COMPLETED
 
@@ -49,6 +50,26 @@ An advanced AI-powered automated trading platform with multi-exchange support, r
 - ✅ Trading frequency limits and cooldown periods
 - ✅ Automatic trading halt on violations
 - ✅ Risk configuration and monitoring API endpoints
+
+**Phase 6: Multi-User System** ✅ COMPLETED
+
+- ✅ Beta code access control system
+- ✅ Per-user configuration (AI provider, exchange, risk settings)
+- ✅ Role-based access control (user/admin)
+- ✅ Admin API endpoints for user and beta code management
+- ✅ Database-driven trader statistics and testnet detection
+- ✅ User-scoped trader instances with ownership validation
+
+**Phase 7: Testing & Optimization** ✅ COMPLETED
+
+- ✅ Comprehensive unit tests (analytics, risk management)
+- ✅ Integration tests for Binance Futures API
+- ✅ Database query optimization with composite indexes
+- ✅ SQLite performance tuning (WAL, caching, mmap)
+- ✅ API rate limiting (token bucket per IP)
+- ✅ Security headers (CSP, XSS, HSTS, etc.)
+- ✅ Request size limiting and panic recovery
+- ✅ Enhanced logging and monitoring
 
 ## 🏗️ Architecture
 
@@ -248,16 +269,75 @@ LLM-Trend/
 - [x] Trading frequency limits
 - [x] Risk monitoring API
 
-### Phase 6: Multi-User System
-- [ ] User management
-- [ ] Trader management
-- [ ] Role-based access
+### Phase 6: Multi-User System ✅
+- [x] Beta code system for access control
+- [x] User configuration management (per-user AI, exchange, risk settings)
+- [x] Per-user trader instances with ownership validation
+- [x] Role-based access control (user/admin)
+- [x] Admin endpoints for user and beta code management
+- [x] Database-driven real-time statistics and testnet detection
 
-### Phase 7: Testing & Optimization
-- [ ] Unit tests
-- [ ] Integration tests
-- [ ] Performance optimization
-- [ ] Security audit
+### Phase 7: Testing & Optimization ✅
+- [x] Unit tests (analytics, risk management)
+- [x] Integration tests (Binance API)
+- [x] Database query optimization with composite indexes
+- [x] SQLite performance tuning (WAL mode, caching, memory-mapped I/O)
+- [x] Rate limiting middleware (per-IP token bucket)
+- [x] Security headers (CSP, XSS protection, HSTS)
+- [x] CORS configuration
+- [x] Request size limiting
+- [x] Panic recovery middleware
+
+## 🧪 Testing
+
+### Running Tests
+
+**Unit Tests** (analytics, risk management, core logic):
+```bash
+# Run all unit tests
+go test ./analytics/... ./risk/...
+
+# Run with verbose output
+go test -v ./analytics/... ./risk/...
+
+# Run with coverage
+go test -cover ./analytics/... ./risk/...
+```
+
+**Integration Tests** (Binance API):
+```bash
+# Set up testnet credentials (get from https://testnet.binancefuture.com)
+export BINANCE_TESTNET_API_KEY=your_testnet_api_key
+export BINANCE_TESTNET_SECRET=your_testnet_secret
+
+# Run integration tests
+go test -v ./trader/...
+
+# Skip integration tests if credentials not available
+go test ./trader/... # Tests will skip automatically
+```
+
+**All Tests**:
+```bash
+# Run all tests in the project
+go test ./...
+
+# Run with race detection
+go test -race ./...
+
+# Generate coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+```
+
+### Test Categories
+
+- **Unit Tests**: Test isolated logic without external dependencies
+  - `analytics/drawdown_test.go` - Drawdown calculation tests
+  - `risk/account_risk_test.go` - Risk management tests
+
+- **Integration Tests**: Test real API interactions (requires credentials)
+  - `trader/binance_futures_test.go` - Binance Futures API tests
 
 ## 🛠️ Development Commands
 
@@ -271,6 +351,12 @@ go build -o llm-trend
 
 # Run with hot reload (requires air)
 air
+
+# Install dependencies
+go mod download
+
+# Update dependencies
+go mod tidy
 ```
 
 ### Frontend
@@ -295,11 +381,35 @@ npm run format
 
 See `.env.example` for all available environment variables:
 
-- `DATA_ENCRYPTION_KEY` - 32-byte hex key for database encryption (required)
-- `JWT_SECRET` - Secret key for JWT tokens (required)
+**Required:**
+- `DATA_ENCRYPTION_KEY` - 32-byte hex key for database encryption
+- `JWT_SECRET` - Secret key for JWT tokens
+
+**Server Configuration:**
 - `NOFX_BACKEND_PORT` - Backend port (default: 8080)
 - `NOFX_FRONTEND_PORT` - Frontend port (default: 3000)
+- `GIN_MODE` - Gin mode: debug, release, or test
+
+**AI Configuration:**
+- `DEFAULT_AI_PROVIDER` - Default AI provider (openai, anthropic, custom)
+- `DEFAULT_AI_MODEL` - Default AI model (gpt-4, claude-3-5-sonnet, etc.)
 - `AI_MAX_TOKENS` - AI response token limit (default: 4000)
+- `AI_REQUEST_TIMEOUT` - AI request timeout in seconds (default: 30)
+
+**Binance API:**
+- `BINANCE_API_KEY` - Production Binance API key (DANGER: Real money!)
+- `BINANCE_SECRET` - Production Binance secret
+- `BINANCE_TESTNET_API_KEY` - Testnet API key (recommended for testing)
+- `BINANCE_TESTNET_SECRET` - Testnet secret
+
+**Optional:**
+- `TELEGRAM_BOT_TOKEN` - Telegram bot token for notifications
+- `TELEGRAM_CHAT_ID` - Telegram chat ID
+- `RATE_LIMIT_RPS` - Requests per second per IP (default: 10)
+- `RATE_LIMIT_BURST` - Rate limit burst size (default: 20)
+- `DATABASE_PATH` - Database file path (default: config.db)
+- `LOG_LEVEL` - Log level: debug, info, warn, error
+- `DEBUG` - Enable debug mode (default: false)
 
 ## ⚠️ Important Notes
 

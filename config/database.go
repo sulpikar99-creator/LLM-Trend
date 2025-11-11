@@ -129,18 +129,50 @@ func initSchema(db *sql.DB) error {
 		FOREIGN KEY (trader_id) REFERENCES traders(id) ON DELETE CASCADE
 	);
 
+	-- Single column indexes
 	CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 	CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 	CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+	CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
+	CREATE INDEX IF NOT EXISTS idx_users_beta_code ON users(beta_code);
 	CREATE INDEX IF NOT EXISTS idx_beta_codes_is_active ON beta_codes(is_active);
 	CREATE INDEX IF NOT EXISTS idx_traders_user_id ON traders(user_id);
 	CREATE INDEX IF NOT EXISTS idx_traders_status ON traders(status);
 	CREATE INDEX IF NOT EXISTS idx_decision_records_trader_id ON decision_records(trader_id);
 	CREATE INDEX IF NOT EXISTS idx_decision_records_timestamp ON decision_records(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_decision_records_cycle_number ON decision_records(cycle_number);
 	CREATE INDEX IF NOT EXISTS idx_performance_records_trader_id ON performance_records(trader_id);
 	CREATE INDEX IF NOT EXISTS idx_performance_records_timestamp ON performance_records(timestamp);
+
+	-- Composite indexes for common query patterns
+	CREATE INDEX IF NOT EXISTS idx_traders_user_status ON traders(user_id, status);
+	CREATE INDEX IF NOT EXISTS idx_decision_records_trader_time ON decision_records(trader_id, timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_decision_records_trader_cycle ON decision_records(trader_id, cycle_number);
+	CREATE INDEX IF NOT EXISTS idx_performance_records_trader_time ON performance_records(trader_id, timestamp ASC);
+	CREATE INDEX IF NOT EXISTS idx_users_active_role ON users(is_active, role);
 	`
 
-	_, err := db.Exec(schema)
-	return err
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+
+	// Optimize SQLite performance settings
+	optimizations := []string{
+		"PRAGMA journal_mode=WAL",          // Write-Ahead Logging for better concurrency
+		"PRAGMA synchronous=NORMAL",         // Balance between safety and performance
+		"PRAGMA cache_size=-64000",          // Use 64MB cache (negative = KB)
+		"PRAGMA temp_store=MEMORY",          // Store temp tables in memory
+		"PRAGMA mmap_size=268435456",        // 256MB memory-mapped I/O
+		"PRAGMA page_size=4096",             // 4KB page size (optimal for most systems)
+		"PRAGMA auto_vacuum=INCREMENTAL",    // Incremental auto-vacuum
+		"PRAGMA incremental_vacuum(100)",    // Vacuum 100 pages at a time
+	}
+
+	for _, opt := range optimizations {
+		if _, err := db.Exec(opt); err != nil {
+			log.Printf("Warning: failed to apply optimization '%s': %v", opt, err)
+		}
+	}
+
+	return nil
 }
