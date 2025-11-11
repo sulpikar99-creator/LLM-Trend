@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: llm-trend-backend
+    ports:
+      - "${NOFX_BACKEND_PORT:-8080}:8080"
+    environment:
+      - DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - NOFX_BACKEND_PORT=8080
+      - NOFX_TIMEZONE=${NOFX_TIMEZONE:-UTC}
+      - AI_MAX_TOKENS=${AI_MAX_TOKENS:-4000}
+      - GIN_MODE=${GIN_MODE:-release}
+    volumes:
+      - ./config.json:/app/config.json
+      - ./config.db:/app/config.db
+      - ./rsa_private_key.pem:/app/rsa_private_key.pem
+      - ./prompts:/app/prompts
+      - ./decision_logs:/app/decision_logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - llm-trend-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: llm-trend-frontend
+    ports:
+      - "${NOFX_FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - llm-trend-network
+
+networks:
+  llm-trend-network:
+    driver: bridge

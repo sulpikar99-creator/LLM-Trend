@@ -1,0 +1,85 @@
+package bootstrap
+
+import (
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/sulpikar99-creator/LLM-Trend/config"
+	"github.com/sulpikar99-creator/LLM-Trend/crypto"
+	"github.com/sulpikar99-creator/LLM-Trend/logger"
+)
+
+// Application holds all initialized components
+type Application struct {
+	Config        *config.Config
+	Database      *config.Database
+	Logger        *logger.Logger
+	CryptoService *crypto.Service
+}
+
+// Initialize sets up the application and all its components
+func Initialize() (*Application, error) {
+	log.Println("Initializing application...")
+
+	// Initialize logger
+	appLogger := logger.New()
+
+	// Validate environment variables
+	if err := validateEnvironment(); err != nil {
+		return nil, fmt.Errorf("environment validation failed: %w", err)
+	}
+
+	// Initialize crypto service
+	cryptoService, err := crypto.NewService()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize crypto service: %w", err)
+	}
+
+	// Initialize database
+	db, err := config.NewDatabase()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
+	}
+
+	// Load configuration
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	app := &Application{
+		Config:        cfg,
+		Database:      db,
+		Logger:        appLogger,
+		CryptoService: cryptoService,
+	}
+
+	log.Println("Application initialized successfully")
+	return app, nil
+}
+
+// Cleanup performs cleanup operations
+func (app *Application) Cleanup() {
+	log.Println("Cleaning up application...")
+	if app.Database != nil {
+		app.Database.Close()
+	}
+	log.Println("Application cleanup completed")
+}
+
+// validateEnvironment checks that required environment variables are set
+func validateEnvironment() error {
+	required := []string{
+		"DATA_ENCRYPTION_KEY",
+		"JWT_SECRET",
+	}
+
+	for _, key := range required {
+		if os.Getenv(key) == "" {
+			return fmt.Errorf("required environment variable %s is not set", key)
+		}
+	}
+
+	return nil
+}
