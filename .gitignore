@@ -13,11 +13,15 @@ go.work
 
 # Database
 *.db
+*.db-shm
+*.db-wal
+*.db.backup
 config.db
 config.json
 
 # Logs
 *.log
+backend.log
 decision_logs/
 
 # Security
