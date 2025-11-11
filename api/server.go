@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -135,6 +137,19 @@ func (s *Server) setupRoutes() {
 		admin.PUT("/users/:user_id/role", s.handleUpdateUserRole)
 		admin.POST("/users/:user_id/deactivate", s.handleDeactivateUser)
 		admin.POST("/users/:user_id/reactivate", s.handleReactivateUser)
+	}
+
+	// Serve frontend static files (production mode)
+	// Only if web/dist exists
+	distPath := "./web/dist"
+	if _, err := os.Stat(distPath); err == nil {
+		// Serve static assets
+		s.Router.Static("/assets", filepath.Join(distPath, "assets"))
+
+		// Serve index.html for root and any non-API routes (for client-side routing)
+		s.Router.NoRoute(func(c *gin.Context) {
+			c.File(filepath.Join(distPath, "index.html"))
+		})
 	}
 }
 
