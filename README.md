@@ -40,6 +40,16 @@ An advanced AI-powered automated trading platform with multi-exchange support, r
 - ✅ Comprehensive risk metrics (Sharpe, Sortino, Calmar ratios)
 - ✅ Analytics API endpoints with query parameters
 
+**Phase 5: Risk Management** ✅ COMPLETED
+
+- ✅ Account-level risk controls (max drawdown, daily loss limits)
+- ✅ Position-level risk controls (stop-loss, take-profit, trailing stop)
+- ✅ Leverage limits (global and per-symbol)
+- ✅ Position sizing based on risk parameters
+- ✅ Trading frequency limits and cooldown periods
+- ✅ Automatic trading halt on violations
+- ✅ Risk configuration and monitoring API endpoints
+
 ## 🏗️ Architecture
 
 ### Backend Stack
@@ -135,6 +145,7 @@ LLM-Trend/
 ├── logger/                 # Logging & decision logs
 ├── manager/                # Trader lifecycle management
 ├── market/                 # Market data & indicators
+├── risk/                   # Risk management system
 ├── trader/                 # Exchange integrations
 ├── web/                    # React frontend
 │   ├── src/
@@ -190,6 +201,14 @@ LLM-Trend/
 - `GET /api/analytics/correlation` - Correlation matrix (supports ?symbols, ?top_n)
 - `GET /api/analytics/performance` - Performance attribution (supports ?trader_id, ?top_n)
 
+### Risk Management
+- `GET /api/risk/:trader_id/config` - Get risk configuration (account + position)
+- `PUT /api/risk/:trader_id/config` - Update risk settings
+- `GET /api/risk/:trader_id/status` - Get real-time risk status
+- `POST /api/risk/:trader_id/reset` - Reset risk monitor (clear violations)
+- `POST /api/risk/:trader_id/calculate-size` - Calculate safe position size
+- `POST /api/risk/:trader_id/calculate-sltp` - Calculate SL/TP prices
+
 ## 🗺️ Development Roadmap
 
 ### Phase 1: Core Infrastructure ✅
@@ -221,9 +240,13 @@ LLM-Trend/
 - [x] Performance attribution
 - [x] Risk metrics calculation
 
-### Phase 5: Risk Management
-- [ ] Account-level controls
-- [ ] Position-level controls
+### Phase 5: Risk Management ✅
+- [x] Account-level controls
+- [x] Position-level controls
+- [x] Leverage limits
+- [x] Position sizing
+- [x] Trading frequency limits
+- [x] Risk monitoring API
 
 ### Phase 6: Multi-User System
 - [ ] User management
