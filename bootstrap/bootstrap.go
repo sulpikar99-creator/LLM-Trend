@@ -59,6 +59,9 @@ func Initialize() (*Application, error) {
 	// Initialize trader manager
 	traderMgr := manager.NewTraderManager()
 
+	// Set database connection for trader statistics
+	traderMgr.SetDatabase(db.DB)
+
 	app := &Application{
 		Config:        cfg,
 		Database:      db,

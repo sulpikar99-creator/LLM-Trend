@@ -2,8 +2,11 @@ package manager
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,31 +30,33 @@ const (
 
 // ManagedTrader wraps a trader with management capabilities
 type ManagedTrader struct {
-	ID              string
-	UserID          string
-	Trader          trader.Trader
-	KlineMonitor    *market.KlineMonitor
-	DecisionEngine  *decision.DecisionEngine
-	DecisionLogger  *logger.DecisionLogger
-	AccountRisk     *risk.AccountRiskMonitor
-	PositionRisk    *risk.PositionRiskManager
-	Status          TraderStatus
-	ErrorMessage    string
-	AutoTrading     bool
+	ID               string
+	UserID           string
+	Trader           trader.Trader
+	KlineMonitor     *market.KlineMonitor
+	DecisionEngine   *decision.DecisionEngine
+	DecisionLogger   *logger.DecisionLogger
+	AccountRisk      *risk.AccountRiskMonitor
+	PositionRisk     *risk.PositionRiskManager
+	Status           TraderStatus
+	ErrorMessage     string
+	AutoTrading      bool
 	DecisionInterval time.Duration
-	SystemPrompt    string
-	StrategyPrompt  string
-	Symbol          string
-	MaxPositionUSD  float64
-	MaxLeverage     int
-	ctx             context.Context
-	cancel          context.CancelFunc
-	mu              sync.RWMutex
+	SystemPrompt     string
+	StrategyPrompt   string
+	Symbol           string
+	MaxPositionUSD   float64
+	MaxLeverage      int
+	DB               *sql.DB // Database connection for stats
+	ctx              context.Context
+	cancel           context.CancelFunc
+	mu               sync.RWMutex
 }
 
 // TraderManager manages multiple traders
 type TraderManager struct {
 	traders map[string]*ManagedTrader
+	db      *sql.DB
 	mu      sync.RWMutex
 }
 
@@ -59,6 +64,19 @@ type TraderManager struct {
 func NewTraderManager() *TraderManager {
 	return &TraderManager{
 		traders: make(map[string]*ManagedTrader),
+		db:      nil, // Will be set later if needed
+	}
+}
+
+// SetDatabase sets the database connection for the trader manager
+func (tm *TraderManager) SetDatabase(db *sql.DB) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.db = db
+
+	// Update existing traders
+	for _, mt := range tm.traders {
+		mt.DB = db
 	}
 }
 
@@ -79,6 +97,7 @@ func (tm *TraderManager) AddTrader(id, userID string, t trader.Trader) (*Managed
 		UserID: userID,
 		Trader: t,
 		Status: TraderStatusStopped,
+		DB:     tm.db,
 		ctx:    ctx,
 		cancel: cancel,
 	}
@@ -180,8 +199,34 @@ func (tm *TraderManager) StartTrader(id, symbol, interval string) error {
 
 	// Start kline monitor if symbol specified
 	if symbol != "" && interval != "" {
-		// Determine if testnet based on trader type
-		testnet := false // TODO: get from trader config
+		// Store symbol for later reference
+		mt.Symbol = symbol
+
+		// Determine if testnet based on exchange config or trader implementation
+		testnet := false
+
+		// Try to detect from BinanceFuturesTrader baseURL
+		if bf, ok := mt.Trader.(*trader.BinanceFuturesTrader); ok {
+			// Access private field through reflection or use type assertion
+			// For now, check exchange type name
+			exchType := bf.GetExchangeType()
+			testnet = strings.Contains(strings.ToLower(exchType), "testnet")
+		}
+
+		// If we have database access, try to get from exchange_config
+		if !testnet && mt.DB != nil {
+			var exchangeConfigJSON sql.NullString
+			err := mt.DB.QueryRow("SELECT exchange_config FROM traders WHERE id = ?", mt.ID).Scan(&exchangeConfigJSON)
+			if err == nil && exchangeConfigJSON.Valid {
+				var config map[string]interface{}
+				if json.Unmarshal([]byte(exchangeConfigJSON.String), &config) == nil {
+					if testnetVal, ok := config["testnet"].(bool); ok {
+						testnet = testnetVal
+					}
+				}
+			}
+		}
+
 		mt.KlineMonitor = market.NewKlineMonitor(symbol, interval, testnet, 500)
 
 		if err := mt.KlineMonitor.Start(); err != nil {
@@ -336,8 +381,14 @@ func (mt *ManagedTrader) GetMarketData() (*market.MarketData, error) {
 		priceChange24h = market.CalculatePriceChange(klines[0].Open, latestKline.Close)
 	}
 
+	// Get symbol from stored value or kline monitor
+	symbol := mt.Symbol
+	if symbol == "" {
+		symbol = "UNKNOWN"
+	}
+
 	md := &market.MarketData{
-		Symbol:             "unknown", // TODO: get from kline monitor
+		Symbol:             symbol,
 		Price:              latestKline.Close,
 		PriceChange24h:     latestKline.Close - klines[0].Open,
 		PriceChangePercent: priceChange24h,
@@ -502,19 +553,53 @@ func (mt *ManagedTrader) gatherDecisionContext(ctx context.Context) (*decision.D
 		}
 	}
 
+	// Calculate TotalTrades and WinRate from database
+	totalTrades := 0
+	winRate := 0.0
+
+	if mt.DB != nil {
+		// Count total trades from decision_records
+		var count int
+		err := mt.DB.QueryRow(`
+			SELECT COUNT(*)
+			FROM decision_records
+			WHERE trader_id = ?
+			AND decision_json IS NOT NULL
+			AND decision_json LIKE '%"action":"open_%'
+		`, mt.ID).Scan(&count)
+		if err == nil {
+			totalTrades = count
+		}
+
+		// Calculate win rate from execution logs or performance records
+		if totalTrades > 0 {
+			var wins int
+			err = mt.DB.QueryRow(`
+				SELECT COUNT(*)
+				FROM decision_records
+				WHERE trader_id = ?
+				AND execution_logs IS NOT NULL
+				AND execution_logs LIKE '%"success":true%'
+			`, mt.ID).Scan(&wins)
+			if err == nil && totalTrades > 0 {
+				winRate = float64(wins) / float64(totalTrades) * 100
+			}
+		}
+	}
+
 	return &decision.DecisionContext{
-		MarketData:     marketData,
-		Klines:         klines,
-		Balance:        balance,
-		Positions:      positions,
-		Symbol:         mt.Symbol,
-		MaxPositionUSD: mt.MaxPositionUSD,
-		MaxLeverage:    mt.MaxLeverage,
-		RiskPercent:    2.0, // Default 2% risk per trade
+		MarketData:      marketData,
+		Klines:          klines,
+		Balance:         balance,
+		Positions:       positions,
+		Symbol:          mt.Symbol,
+		MaxPositionUSD:  mt.MaxPositionUSD,
+		MaxLeverage:     mt.MaxLeverage,
+		RiskPercent:     2.0, // Default 2% risk per trade
 		RecentDecisions: recentDecisions,
-		TotalTrades:    0, // TODO: track from database
-		WinRate:        0, // TODO: calculate from history
-		TotalPnL:       balance.UnrealizedProfit,
+		TotalTrades:     totalTrades,
+		WinRate:         winRate,
+		TotalPnL:        balance.UnrealizedProfit,
 	}, nil
 }
 

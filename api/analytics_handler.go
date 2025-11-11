@@ -1,8 +1,11 @@
 package api
 
 import (
+	"database/sql"
+	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,23 +27,75 @@ func (s *Server) handleGetDrawdown(c *gin.Context) {
 	startDateStr := c.Query("start_date")
 	endDateStr := c.Query("end_date")
 
-	// For demo purposes, generate sample equity curve
-	// In production, this would come from database
-	equityPoints := generateSampleEquityCurve(100, 10000.0)
+	// Build query
+	query := `
+		SELECT timestamp, equity, balance
+		FROM performance_records
+		WHERE trader_id IN (SELECT id FROM traders WHERE user_id = ?)
+	`
+	args := []interface{}{userID}
 
-	// Filter by date range if provided
-	if startDateStr != "" && endDateStr != "" {
-		startDate, err1 := time.Parse("2006-01-02", startDateStr)
-		endDate, err2 := time.Parse("2006-01-02", endDateStr)
-		if err1 == nil && err2 == nil {
-			filtered := []analytics.EquityPoint{}
-			for _, point := range equityPoints {
-				if point.Timestamp.After(startDate) && point.Timestamp.Before(endDate) {
-					filtered = append(filtered, point)
-				}
-			}
-			equityPoints = filtered
+	if traderID != "" {
+		query = `
+			SELECT timestamp, equity, balance
+			FROM performance_records
+			WHERE trader_id = ?
+		`
+		args = []interface{}{traderID}
+
+		// Verify ownership
+		var ownerID string
+		err := s.app.Database.DB.QueryRow("SELECT user_id FROM traders WHERE id = ?", traderID).Scan(&ownerID)
+		if err != nil || ownerID != userID {
+			errorResponse(c, http.StatusForbidden, "Access denied")
+			return
 		}
+	}
+
+	if startDateStr != "" && endDateStr != "" {
+		query += " AND timestamp BETWEEN ? AND ?"
+		args = append(args, startDateStr, endDateStr)
+	}
+
+	query += " ORDER BY timestamp ASC"
+
+	// Fetch equity curve from database
+	rows, err := s.app.Database.DB.Query(query, args...)
+	if err != nil {
+		errorResponse(c, http.StatusInternalServerError, "Database error: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	equityPoints := []analytics.EquityPoint{}
+	for rows.Next() {
+		var point analytics.EquityPoint
+		var timestamp string
+		err := rows.Scan(&timestamp, &point.Equity, &point.Balance)
+		if err != nil {
+			continue
+		}
+
+		// Parse timestamp
+		t, err := time.Parse("2006-01-02 15:04:05", timestamp)
+		if err != nil {
+			t, _ = time.Parse(time.RFC3339, timestamp)
+		}
+		point.Timestamp = t
+
+		equityPoints = append(equityPoints, point)
+	}
+
+	// If no data, return empty result
+	if len(equityPoints) == 0 {
+		successResponse(c, gin.H{
+			"message":           "No performance data available",
+			"trader_id":         traderID,
+			"drawdown_analysis": nil,
+			"underwater_chart":  nil,
+			"equity_points":     []analytics.EquityPoint{},
+		})
+		return
 	}
 
 	// Calculate drawdown
@@ -71,6 +126,8 @@ func (s *Server) handleGetMonteCarlo(c *gin.Context) {
 		return
 	}
 
+	traderID := c.Query("trader_id")
+
 	// Parse query parameters
 	initialBalance := 10000.0
 	if bal := c.Query("initial_balance"); bal != "" {
@@ -93,8 +150,62 @@ func (s *Server) handleGetMonteCarlo(c *gin.Context) {
 		}
 	}
 
-	// Get historical returns to estimate parameters (demo data)
-	historicalReturns := []float64{0.02, -0.01, 0.03, -0.015, 0.025, 0.01, -0.02, 0.04}
+	// Get historical returns from real performance data
+	historicalReturns := []float64{}
+
+	query := `
+		SELECT equity
+		FROM performance_records
+		WHERE trader_id IN (SELECT id FROM traders WHERE user_id = ?)
+		ORDER BY timestamp ASC
+	`
+	args := []interface{}{userID}
+
+	if traderID != "" {
+		// Verify ownership
+		var ownerID string
+		err := s.app.Database.DB.QueryRow("SELECT user_id FROM traders WHERE id = ?", traderID).Scan(&ownerID)
+		if err != nil || ownerID != userID {
+			errorResponse(c, http.StatusForbidden, "Access denied")
+			return
+		}
+
+		query = `
+			SELECT equity
+			FROM performance_records
+			WHERE trader_id = ?
+			ORDER BY timestamp ASC
+		`
+		args = []interface{}{traderID}
+	}
+
+	rows, err := s.app.Database.DB.Query(query, args...)
+	if err == nil {
+		defer rows.Close()
+
+		var prevEquity float64
+		first := true
+
+		for rows.Next() {
+			var equity float64
+			if err := rows.Scan(&equity); err != nil {
+				continue
+			}
+
+			if !first && prevEquity > 0 {
+				ret := (equity - prevEquity) / prevEquity
+				historicalReturns = append(historicalReturns, ret)
+			}
+
+			prevEquity = equity
+			first = false
+		}
+	}
+
+	// Use default if no historical data
+	if len(historicalReturns) == 0 {
+		historicalReturns = []float64{0.02, -0.01, 0.03, -0.015, 0.025, 0.01, -0.02, 0.04}
+	}
 
 	// Estimate parameters from history
 	params := analytics.EstimateParametersFromHistory(historicalReturns)
@@ -131,22 +242,23 @@ func (s *Server) handleGetMonteCarlo(c *gin.Context) {
 	}
 
 	response := gin.H{
-		"config":              params,
-		"paths":               paths,
-		"percentiles":         result.Percentiles,
-		"mean":                result.Mean,
-		"std_dev":             result.StdDev,
-		"median_return":       result.MedianReturn,
-		"probability_profit":  result.ProbabilityProfit,
-		"probability_loss":    result.ProbabilityLoss,
-		"var_95":              result.ValueAtRisk95,
-		"var_99":              result.ValueAtRisk99,
-		"cvar_95":             result.ConditionalVaR95,
-		"avg_max_drawdown":    result.AvgMaxDrawdown,
-		"best_case":           result.BestCaseScenario,
-		"worst_case":          result.WorstCaseScenario,
+		"config":               params,
+		"paths":                paths,
+		"percentiles":          result.Percentiles,
+		"mean":                 result.Mean,
+		"std_dev":              result.StdDev,
+		"median_return":        result.MedianReturn,
+		"probability_profit":   result.ProbabilityProfit,
+		"probability_loss":     result.ProbabilityLoss,
+		"var_95":               result.ValueAtRisk95,
+		"var_99":               result.ValueAtRisk99,
+		"cvar_95":              result.ConditionalVaR95,
+		"avg_max_drawdown":     result.AvgMaxDrawdown,
+		"best_case":            result.BestCaseScenario,
+		"worst_case":           result.WorstCaseScenario,
 		"confidence_intervals": result.ConfidenceIntervals,
-		"summary":             result.GetSummary(),
+		"summary":              result.GetSummary(),
+		"historical_samples":   len(historicalReturns),
 	}
 
 	successResponse(c, response)
@@ -162,19 +274,78 @@ func (s *Server) handleGetCorrelation(c *gin.Context) {
 
 	// Get symbols from query (comma-separated)
 	symbolsStr := c.DefaultQuery("symbols", "BTCUSDT,ETHUSDT,BNBUSDT")
+	symbols := strings.Split(symbolsStr, ",")
 
-	// Parse symbols
-	// In production, fetch actual price data from database/exchange
-	// For now, generate sample data
-	symbols := []string{"BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"}
-	priceData := make([]*analytics.PriceData, len(symbols))
+	// Trim whitespace
+	for i := range symbols {
+		symbols[i] = strings.TrimSpace(symbols[i])
+	}
 
-	for i, symbol := range symbols {
-		prices := generateSamplePrices(100, 50000.0+float64(i*10000))
-		priceData[i] = &analytics.PriceData{
-			Symbol: symbol,
-			Prices: prices,
+	// Note: For real correlation, we would need historical price data
+	// This could come from:
+	// 1. Kline data stored in database (not implemented yet)
+	// 2. Real-time fetch from Binance API
+	// 3. Decision records with entry prices
+
+	// For now, fetch from decision records as proxy
+	priceData := make([]*analytics.PriceData, 0)
+
+	for _, symbol := range symbols {
+		query := `
+			SELECT decision_json
+			FROM decision_records
+			WHERE trader_id IN (SELECT id FROM traders WHERE user_id = ?)
+			AND decision_json LIKE ?
+			ORDER BY timestamp DESC
+			LIMIT 100
+		`
+
+		rows, err := s.app.Database.DB.Query(query, userID, "%"+symbol+"%")
+		if err != nil {
+			continue
 		}
+
+		prices := []float64{}
+
+		for rows.Next() {
+			var decisionJSON sql.NullString
+			if err := rows.Scan(&decisionJSON); err != nil {
+				continue
+			}
+
+			if !decisionJSON.Valid {
+				continue
+			}
+
+			// Parse decision JSON to extract price
+			var decision map[string]interface{}
+			if err := json.Unmarshal([]byte(decisionJSON.String), &decision); err != nil {
+				continue
+			}
+
+			// Extract price if available
+			if priceVal, ok := decision["entry_price"].(float64); ok {
+				prices = append(prices, priceVal)
+			}
+		}
+		rows.Close()
+
+		if len(prices) > 0 {
+			priceData = append(priceData, &analytics.PriceData{
+				Symbol: symbol,
+				Prices: prices,
+			})
+		}
+	}
+
+	// If no real data, return informative error
+	if len(priceData) < 2 {
+		successResponse(c, gin.H{
+			"message": "Insufficient price data for correlation analysis. Need historical data for at least 2 symbols.",
+			"symbols": symbols,
+			"note":    "Correlation analysis requires historical trading data. Start trading or provide more symbols.",
+		})
+		return
 	}
 
 	// Calculate correlation matrix
@@ -221,9 +392,133 @@ func (s *Server) handleGetPerformance(c *gin.Context) {
 	// Get trader_id from query (optional)
 	traderID := c.Query("trader_id")
 
-	// In production, fetch trade history from database
-	// For now, generate sample trades
-	trades := generateSampleTrades(50)
+	// Fetch trade history from decision_records
+	query := `
+		SELECT
+			id, trader_id, cycle_number, timestamp,
+			decision_json, account_state, execution_logs
+		FROM decision_records
+		WHERE trader_id IN (SELECT id FROM traders WHERE user_id = ?)
+		AND decision_json IS NOT NULL
+		ORDER BY timestamp DESC
+		LIMIT 1000
+	`
+	args := []interface{}{userID}
+
+	if traderID != "" {
+		// Verify ownership
+		var ownerID string
+		err := s.app.Database.DB.QueryRow("SELECT user_id FROM traders WHERE id = ?", traderID).Scan(&ownerID)
+		if err != nil || ownerID != userID {
+			errorResponse(c, http.StatusForbidden, "Access denied")
+			return
+		}
+
+		query = `
+			SELECT
+				id, trader_id, cycle_number, timestamp,
+				decision_json, account_state, execution_logs
+			FROM decision_records
+			WHERE trader_id = ?
+			AND decision_json IS NOT NULL
+			ORDER BY timestamp DESC
+			LIMIT 1000
+		`
+		args = []interface{}{traderID}
+	}
+
+	rows, err := s.app.Database.DB.Query(query, args...)
+	if err != nil {
+		errorResponse(c, http.StatusInternalServerError, "Database error: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	trades := []*analytics.TradeRecord{}
+
+	for rows.Next() {
+		var id, traderIDStr string
+		var cycleNumber int
+		var timestamp string
+		var decisionJSON, accountState, executionLogs sql.NullString
+
+		if err := rows.Scan(&id, &traderIDStr, &cycleNumber, &timestamp, &decisionJSON, &accountState, &executionLogs); err != nil {
+			continue
+		}
+
+		if !decisionJSON.Valid {
+			continue
+		}
+
+		// Parse decision JSON
+		var decision map[string]interface{}
+		if err := json.Unmarshal([]byte(decisionJSON.String), &decision); err != nil {
+			continue
+		}
+
+		// Parse execution logs for PnL if available
+		var execLogs map[string]interface{}
+		if executionLogs.Valid {
+			json.Unmarshal([]byte(executionLogs.String), &execLogs)
+		}
+
+		// Extract trade information
+		action, _ := decision["action"].(string)
+		if action != "open_long" && action != "open_short" && action != "close" {
+			continue
+		}
+
+		symbol, _ := decision["symbol"].(string)
+		entryPrice, _ := decision["entry_price"].(float64)
+		size, _ := decision["size"].(float64)
+
+		// Determine side
+		side := "LONG"
+		if action == "open_short" {
+			side = "SHORT"
+		}
+
+		// Try to calculate PnL from execution logs or account state
+		pnl := 0.0
+		if execLogs != nil {
+			if pnlVal, ok := execLogs["pnl"].(float64); ok {
+				pnl = pnlVal
+			}
+		}
+
+		// Parse timestamp
+		t, _ := time.Parse("2006-01-02 15:04:05", timestamp)
+
+		// Create trade record
+		trade := &analytics.TradeRecord{
+			Symbol:      symbol,
+			Side:        side,
+			EntryPrice:  entryPrice,
+			ExitPrice:   entryPrice, // Would need to track actual exit
+			Size:        size,
+			EntryTime:   t,
+			ExitTime:    t.Add(1 * time.Hour), // Approximate
+			PnL:         pnl,
+			PnLPercent:  (pnl / (entryPrice * size)) * 100,
+			Commission:  entryPrice * size * 0.0004 * 2,
+			NetPnL:      pnl - (entryPrice * size * 0.0004 * 2),
+			Duration:    1.0, // Approximate
+			Strategy:    "AI Strategy",
+			TradeID:     id,
+		}
+
+		trades = append(trades, trade)
+	}
+
+	// If no trades, return empty result
+	if len(trades) == 0 {
+		successResponse(c, gin.H{
+			"message":      "No trade data available",
+			"trader_id":    traderID,
+			"total_trades": 0,
+		})
+		return
+	}
 
 	// Calculate performance metrics
 	metrics := analytics.CalculatePerformanceMetrics(trades)
@@ -243,127 +538,17 @@ func (s *Server) handleGetPerformance(c *gin.Context) {
 	worstPerformers := attribution.GetWorstPerformers(topN)
 
 	response := gin.H{
-		"overall_metrics":   metrics,
-		"by_symbol":         attribution.BySymbol,
-		"by_strategy":       attribution.ByStrategy,
-		"by_side":           attribution.BySide,
-		"by_timeframe":      attribution.ByTimeframe,
-		"top_performers":    topPerformers,
-		"worst_performers":  worstPerformers,
-		"trader_id":         traderID,
-		"summary":           metrics.GenerateSummaryReport(),
-		"total_trades":      len(trades),
+		"overall_metrics":  metrics,
+		"by_symbol":        attribution.BySymbol,
+		"by_strategy":      attribution.ByStrategy,
+		"by_side":          attribution.BySide,
+		"by_timeframe":     attribution.ByTimeframe,
+		"top_performers":   topPerformers,
+		"worst_performers": worstPerformers,
+		"trader_id":        traderID,
+		"summary":          metrics.GenerateSummaryReport(),
+		"total_trades":     len(trades),
 	}
 
 	successResponse(c, response)
-}
-
-// Helper functions for generating sample data
-// In production, these would fetch from database
-
-func generateSampleEquityCurve(points int, initialEquity float64) []analytics.EquityPoint {
-	result := make([]analytics.EquityPoint, points)
-	equity := initialEquity
-	baseTime := time.Now().AddDate(0, 0, -points)
-
-	for i := 0; i < points; i++ {
-		// Random walk with slight upward bias
-		change := (float64(i%10) - 4.5) * 100
-		equity += change
-
-		result[i] = analytics.EquityPoint{
-			Timestamp: baseTime.Add(time.Duration(i) * time.Hour),
-			Equity:    equity,
-			Balance:   equity,
-		}
-	}
-
-	return result
-}
-
-func generateSamplePrices(points int, initialPrice float64) []float64 {
-	prices := make([]float64, points)
-	price := initialPrice
-
-	for i := 0; i < points; i++ {
-		// Random walk
-		change := (float64(i%20) - 10) * price * 0.001
-		price += change
-
-		if price < initialPrice*0.5 {
-			price = initialPrice * 0.5
-		}
-		if price > initialPrice*1.5 {
-			price = initialPrice * 1.5
-		}
-
-		prices[i] = price
-	}
-
-	return prices
-}
-
-func generateSampleTrades(count int) []*analytics.TradeRecord {
-	trades := make([]*analytics.TradeRecord, count)
-	symbols := []string{"BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"}
-	sides := []string{"LONG", "SHORT"}
-	baseTime := time.Now().AddDate(0, 0, -30)
-
-	for i := 0; i < count; i++ {
-		symbol := symbols[i%len(symbols)]
-		side := sides[i%len(sides)]
-		entryPrice := 50000.0 + float64(i*100)
-		size := 0.1 + float64(i%10)*0.01
-
-		// Generate win/loss (60% win rate)
-		isWin := (i%10) < 6
-		exitPrice := entryPrice
-
-		if isWin {
-			if side == "LONG" {
-				exitPrice = entryPrice * 1.02 // 2% profit
-			} else {
-				exitPrice = entryPrice * 0.98
-			}
-		} else {
-			if side == "LONG" {
-				exitPrice = entryPrice * 0.99 // 1% loss
-			} else {
-				exitPrice = entryPrice * 1.01
-			}
-		}
-
-		pnl := 0.0
-		if side == "LONG" {
-			pnl = (exitPrice - entryPrice) * size
-		} else {
-			pnl = (entryPrice - exitPrice) * size
-		}
-
-		pnlPercent := (pnl / (entryPrice * size)) * 100
-		commission := entryPrice * size * 0.0004 * 2 // 0.04% * 2 (entry + exit)
-		netPnL := pnl - commission
-
-		entryTime := baseTime.Add(time.Duration(i) * time.Hour * 12)
-		exitTime := entryTime.Add(time.Duration(2+i%10) * time.Hour)
-
-		trades[i] = &analytics.TradeRecord{
-			Symbol:      symbol,
-			Side:        side,
-			EntryPrice:  entryPrice,
-			ExitPrice:   exitPrice,
-			Size:        size,
-			EntryTime:   entryTime,
-			ExitTime:    exitTime,
-			PnL:         pnl,
-			PnLPercent:  pnlPercent,
-			Commission:  commission,
-			NetPnL:      netPnL,
-			Duration:    exitTime.Sub(entryTime).Hours(),
-			Strategy:    "AI Strategy",
-			TradeID:     strconv.Itoa(i + 1),
-		}
-	}
-
-	return trades
 }
