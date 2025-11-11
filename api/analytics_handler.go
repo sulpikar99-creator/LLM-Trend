@@ -202,9 +202,10 @@ func (s *Server) handleGetMonteCarlo(c *gin.Context) {
 		}
 	}
 
-	// Use default if no historical data
+	// Return error if no historical data (don't use fake data!)
 	if len(historicalReturns) == 0 {
-		historicalReturns = []float64{0.02, -0.01, 0.03, -0.015, 0.025, 0.01, -0.02, 0.04}
+		errorResponse(c, http.StatusBadRequest, "No historical trading data available. Please execute some trades first before running Monte Carlo simulation.")
+		return
 	}
 
 	// Estimate parameters from history

@@ -24,6 +24,7 @@ export default function TradersPage() {
   const [exchangeType, setExchangeType] = useState('binance_futures')
   const [apiKey, setApiKey] = useState('')
   const [apiSecret, setApiSecret] = useState('')
+  const [useTestnet, setUseTestnet] = useState(true)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
@@ -54,7 +55,7 @@ export default function TradersPage() {
         exchange_config: {
           api_key: apiKey,
           api_secret: apiSecret,
-          testnet: true
+          testnet: useTestnet
         }
       })
 
@@ -62,6 +63,7 @@ export default function TradersPage() {
       setTraderName('')
       setApiKey('')
       setApiSecret('')
+      setUseTestnet(true)
       loadTraders()
     } catch (err: any) {
       setError(err.message || 'Failed to create trader')
@@ -256,7 +258,7 @@ export default function TradersPage() {
                     onChange={(e) => setExchangeType(e.target.value)}
                     className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
                   >
-                    <option value="binance_futures">Binance Futures (Testnet)</option>
+                    <option value="binance_futures">Binance Futures</option>
                   </select>
                 </div>
 
@@ -284,17 +286,55 @@ export default function TradersPage() {
                   />
                 </div>
 
-                <div className="bg-yellow-500/10 border border-yellow-500/50 text-yellow-500 px-4 py-3 rounded text-sm">
-                  <strong>Note:</strong> Get your testnet API keys from{' '}
-                  <a
-                    href="https://testnet.binancefuture.com"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline"
-                  >
-                    testnet.binancefuture.com
-                  </a>
+                <div className="border border-border rounded p-4">
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useTestnet}
+                      onChange={(e) => setUseTestnet(e.target.checked)}
+                      className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-2 focus:ring-primary"
+                    />
+                    <span className="text-sm font-medium">
+                      Use Testnet Mode (Recommended for testing)
+                    </span>
+                  </label>
+                  <p className="text-xs text-gray-400 mt-2 ml-6">
+                    Testnet allows you to practice trading without risking real money
+                  </p>
                 </div>
+
+                {useTestnet ? (
+                  <div className="bg-yellow-500/10 border border-yellow-500/50 text-yellow-500 px-4 py-3 rounded text-sm">
+                    <strong>🔶 Testnet Mode:</strong> Get your testnet API keys from{' '}
+                    <a
+                      href="https://testnet.binancefuture.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline font-semibold"
+                    >
+                      testnet.binancefuture.com
+                    </a>
+                    <br />
+                    <span className="text-xs">No real money will be used. All trades are simulated.</span>
+                  </div>
+                ) : (
+                  <div className="bg-red-500/10 border border-red-500 text-red-500 px-4 py-3 rounded text-sm">
+                    <strong>⚠️ REAL TRADING MODE:</strong> You are using your REAL Binance account.
+                    <br />
+                    <strong>Real money will be traded!</strong> Make sure you understand the risks.
+                    <br />
+                    <span className="text-xs">Get your API keys from{' '}
+                      <a
+                        href="https://www.binance.com/en/my/settings/api-management"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline font-semibold"
+                      >
+                        Binance API Management
+                      </a>
+                    </span>
+                  </div>
+                )}
 
                 <div className="flex space-x-3 mt-6">
                   <button
