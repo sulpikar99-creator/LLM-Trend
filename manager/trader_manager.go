@@ -415,6 +415,21 @@ func (mt *ManagedTrader) EnableAutoTrading(aiConfig *decision.AIConfig, systemPr
 		return fmt.Errorf("auto-trading already enabled")
 	}
 
+	// Validate AI configuration
+	if aiConfig == nil {
+		return fmt.Errorf("AI configuration is required for auto-trading")
+	}
+
+	// Check if API key is configured
+	if aiConfig.APIKey == "" {
+		return fmt.Errorf("AI API key not configured. Please add your %s API key in Settings page before enabling auto-trading", aiConfig.Provider)
+	}
+
+	// Validate other required fields
+	if aiConfig.Model == "" {
+		return fmt.Errorf("AI model not specified in configuration")
+	}
+
 	// Initialize decision engine
 	mt.DecisionEngine = decision.NewDecisionEngine(aiConfig)
 

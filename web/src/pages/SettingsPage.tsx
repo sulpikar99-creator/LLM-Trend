@@ -10,6 +10,7 @@ interface AIModel {
   base_url: string
   max_tokens: number
   temperature: number
+  api_key_encrypted?: string
 }
 
 interface RiskLimits {
@@ -43,6 +44,7 @@ export default function SettingsPage() {
   // AI model form state
   const [aiProvider, setAiProvider] = useState('deepseek')
   const [aiModel, setAiModel] = useState('deepseek-chat')
+  const [aiApiKey, setAiApiKey] = useState('')
   const [aiBaseUrl, setAiBaseUrl] = useState('https://api.deepseek.com')
   const [aiMaxTokens, setAiMaxTokens] = useState(4000)
   const [aiTemperature, setAiTemperature] = useState(0.7)
@@ -76,6 +78,7 @@ export default function SettingsPage() {
         const model = configData.ai_models[0]
         setAiProvider(model.provider)
         setAiModel(model.id)
+        setAiApiKey(model.api_key_encrypted || '')
         setAiBaseUrl(model.base_url)
         setAiMaxTokens(model.max_tokens)
         setAiTemperature(model.temperature)
@@ -134,6 +137,7 @@ export default function SettingsPage() {
             id: aiModel,
             name: aiModel.replace('-', ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
             provider: aiProvider,
+            api_key_encrypted: aiApiKey,
             base_url: aiBaseUrl,
             max_tokens: aiMaxTokens,
             temperature: aiTemperature,
@@ -351,6 +355,23 @@ export default function SettingsPage() {
                 Configure the AI model used for trading decisions
               </p>
 
+              {/* Warning if API key is not set */}
+              {!aiApiKey && (
+                <div className="mb-4 bg-red-500/10 border border-red-500 text-red-500 px-4 py-3 rounded">
+                  <strong>⚠️ Required:</strong> AI API Key must be configured before starting traders.
+                  <br />
+                  Get your API key from{' '}
+                  <a
+                    href={aiProvider === 'deepseek' ? 'https://platform.deepseek.com' : 'https://platform.openai.com'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline font-semibold"
+                  >
+                    {aiProvider === 'deepseek' ? 'DeepSeek Platform' : 'OpenAI Platform'}
+                  </a>
+                </div>
+              )}
+
               <form onSubmit={handleSaveAIConfig} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -381,6 +402,23 @@ export default function SettingsPage() {
                       className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
                       placeholder="deepseek-chat"
                     />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium mb-2">
+                      API Key <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={aiApiKey}
+                      onChange={(e) => setAiApiKey(e.target.value)}
+                      className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
+                      placeholder="sk-..."
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Your {aiProvider} API key. This will be encrypted and stored securely.
+                    </p>
                   </div>
 
                   <div>
