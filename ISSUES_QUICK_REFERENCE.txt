@@ -1,0 +1,176 @@
+================================================================================
+                    LLM-TREND CODEBASE - ISSUES QUICK REFERENCE
+================================================================================
+
+CRITICAL ISSUES (4) - Address Immediately
+================================================================================
+
+1. SILENTLY IGNORED DATABASE SCAN ERRORS
+   Location: api/trader_handler.go:56
+   Also: analytics_handler.go (lines 75, 192, 316, 450, 460)
+   Impact: Users see incomplete data without warnings
+   Fix: Add error logging instead of silent continue
+
+2. POTENTIAL SQL INJECTION - LIKE WILDCARD PATTERN
+   Location: api/analytics_handler.go:306
+   Impact: Users could access unintended analytics data via wildcards
+   Fix: Escape LIKE wildcards: "%" -> "\\%", "_" -> "\\_"
+
+3. WEBSOCKET ORIGIN VALIDATION HARDCODED TO LOCALHOST
+   Location: api/websocket_handler.go:14-21
+   Impact: Production deployments may reject all WebSocket connections
+   Fix: Use environment-based origin configuration
+
+4. JWT_SECRET NOT VALIDATED AT APPLICATION STARTUP
+   Location: auth/auth.go:21-45
+   Impact: App may start without valid auth configuration
+   Fix: Validate JWT_SECRET during bootstrap initialization
+
+================================================================================
+HIGH-PRIORITY ISSUES (8) - Address Within Sprint
+================================================================================
+
+5. INCORRECT RETURN TYPE IN LOGIN/REGISTER METHODS
+   Location: web/src/lib/api.ts:70-81
+   Type Mismatch: Declares Promise<AuthResponse> but returns ApiResponse wrapper
+   Fix: Update return type or generic parameter
+
+6. UNTYPED ANALYTICS RESPONSES USING 'ANY'
+   Location: web/src/lib/api.ts:119-136
+   Impact: Loss of type safety for analytics data
+   Fix: Define proper TypeScript interfaces
+
+7. MISSING ERROR HANDLING FOR BETA CODE USAGE
+   Location: api/auth_handler.go:95-100
+   Impact: Beta codes could be used multiple times
+   TODO Comment on line 99 confirms this is incomplete
+
+8. MISSING EXCHANGE_CONFIG IN TRADER LIST
+   Location: api/trader_handler.go:40-45
+   Impact: Frontend expects field that backend doesn't return
+   Fix: Add "exchange_config" to SELECT statement
+
+9. INCONSISTENT ANALYTICS RESPONSE FIELD NAMES
+   Location: api/analytics_handler.go:245-262
+   CamelCase/snake_case mismatch between backend and frontend types
+   Fix: Ensure consistent naming conventions
+
+10. RACE CONDITION IN WEBSOCKET AUTHORIZATION
+    Location: api/websocket_handler.go:48-70
+    TOCTOU (Time of check, Time of use) vulnerability
+    Fix: Use transaction or re-verify after upgrade
+
+11. UNHANDLED JSON UNMARSHALING ERRORS
+    Location: api/analytics_handler.go:325, 459
+    Corrupted data silently skipped from results
+    Fix: Log errors when parsing decision records fails
+
+12. NO LOGOUT ENDPOINT - TOKEN INVALIDATION MISSING
+    Location: api/server.go (routes missing logout endpoint)
+    Impact: Tokens cannot be revoked, remain valid until expiration
+    Fix: Implement token blacklist or logout endpoint
+
+================================================================================
+MEDIUM-PRIORITY ISSUES (5) - Address In Future Releases
+================================================================================
+
+13. ARRAY VALIDATION WITHOUT ERROR DISPLAY
+    Location: web/src/pages/AnalyticsPage.tsx:40-47
+    Empty charts displayed silently if API returns wrong structure
+
+14. MISSING PARAMETER VALIDATION - DOS VULNERABILITY
+    Location: api/analytics_handler.go:132-151
+    Parameters like num_simulations unlimited (could request 1M+ simulations)
+    Fix: Add max bounds: if parsed > 0 && parsed <= 10000
+
+15. MISSING ENUM CONSTRAINT FOR STATUS FIELD
+    Location: config/database.go (traders.status)
+    Fix: Add CHECK constraint: status IN ('stopped', 'running', 'error')
+
+16. MISSING COMPOSITE INDEXES
+    Location: config/database.go
+    Large queries on decision_records, performance_records would benefit from
+    composite indexes on (trader_id, timestamp)
+
+17. GENERIC ERROR MESSAGES IN MUTATIONS
+    Location: web/src/pages/TradersPage.tsx:48-50
+    Poor user experience with unclear error messages
+
+================================================================================
+SUMMARY BY FILE
+================================================================================
+
+web/src/lib/api.ts
+  - Issue #5: Incorrect return types (lines 70-81)
+  - Issue #6: Using 'any' for analytics responses (lines 119-136)
+
+web/src/pages/AnalyticsPage.tsx
+  - Issue #13: Array validation without error display (lines 40-47)
+
+web/src/pages/TradersPage.tsx
+  - Issue #17: Generic error messages (lines 48-50)
+
+api/auth_handler.go
+  - Issue #7: Missing error handling for beta codes (lines 95-100)
+
+api/trader_handler.go
+  - Issue #1: Silently ignored scan errors (line 56)
+  - Issue #8: Missing exchange_config in SELECT (lines 40-45)
+
+api/analytics_handler.go
+  - Issue #1: Multiple silently ignored scan errors (lines 75, 192, 316, 450, 460)
+  - Issue #2: SQL injection risk via LIKE wildcards (line 306)
+  - Issue #9: Inconsistent field names (lines 245-262)
+  - Issue #11: Unhandled JSON parsing errors (lines 325, 459)
+  - Issue #14: No bounds on query parameters (lines 132-151)
+
+api/websocket_handler.go
+  - Issue #3: Hardcoded origin validation (lines 14-21)
+  - Issue #10: TOCTOU vulnerability (lines 48-70)
+
+api/server.go
+  - Issue #12: No logout endpoint defined (routes section)
+
+auth/auth.go
+  - Issue #4: JWT_SECRET not validated at startup (lines 21-45)
+
+config/database.go
+  - Issue #15: Missing enum constraint (lines 89-103)
+  - Issue #16: Missing composite indexes (full file)
+
+================================================================================
+TESTING RECOMMENDATIONS
+================================================================================
+
+1. Test database scan errors:
+   - INSERT invalid data and verify error handling
+
+2. Test SQL LIKE injection:
+   - Try symbol values: "%", "_", "%BTCUSDT%"
+
+3. Test parameter bounds:
+   - Call /analytics/montecarlo?num_simulations=999999999
+
+4. Test WebSocket authentication:
+   - Attempt connection to deleted trader
+   - Test from different origins
+
+5. Test token expiration:
+   - Wait for token expiration and verify behavior
+   - Attempt logout without endpoint
+
+6. Test type safety:
+   - Verify all analytics responses match types
+   - Check for missing fields in list responses
+
+================================================================================
+LEGEND
+================================================================================
+Location Format: file_path:line_number
+Critical: Security or data integrity risk
+High: Functionality breaks or data loss
+Medium: Degraded performance or poor UX
+Low: Technical debt or minor issues
+
+Generated: 2025-11-12
+Report Location: /home/user/LLM-Trend/BUG_REPORT.md
