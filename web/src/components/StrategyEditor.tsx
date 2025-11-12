@@ -1,11 +1,10 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tantml:react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Brain, Save, RotateCcw, Sparkles, AlertCircle, CheckCircle } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
-import { api } from '@/lib/api'
 
 interface StrategyEditorProps {
   traderId: string
@@ -95,10 +94,31 @@ export function StrategyEditor({ traderId, currentStrategy, traderName }: Strate
 
   const updateStrategyMutation = useMutation({
     mutationFn: async (newStrategy: string) => {
-      return api.request(`/traders/${traderId}`, {
+      const token = localStorage.getItem('auth-storage')
+      let authToken = ''
+      if (token) {
+        try {
+          const parsed = JSON.parse(token)
+          authToken = parsed.state?.token || ''
+        } catch (e) {
+          console.error('Failed to parse auth token:', e)
+        }
+      }
+
+      const response = await fetch(`/api/traders/${traderId}`, {
         method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
         body: JSON.stringify({ strategy_prompt: newStrategy }),
       })
+
+      if (!response.ok) {
+        throw new Error('Failed to update strategy')
+      }
+
+      return response.json()
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['trader', traderId] })
@@ -230,7 +250,7 @@ export function StrategyEditor({ traderId, currentStrategy, traderName }: Strate
               Save Strategy
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               onClick={handleReset}
               disabled={!hasChanges}
             >

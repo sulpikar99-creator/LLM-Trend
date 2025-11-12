@@ -65,7 +65,7 @@ export default function TraderDetailPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
           <Button
-            variant="outline"
+            variant="secondary"
             onClick={() => navigate('/traders')}
             className="p-2"
           >

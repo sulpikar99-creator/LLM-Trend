@@ -38,6 +38,7 @@ export interface Trader {
   symbol: string
   interval: string
   status: 'stopped' | 'running' | 'error'
+  strategy_prompt?: string
   created_at: string
   updated_at: string
   exchange_config?: {

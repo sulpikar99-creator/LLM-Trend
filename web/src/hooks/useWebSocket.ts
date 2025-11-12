@@ -21,7 +21,7 @@ export function useWebSocket({ traderId, onMessage, onConnect, onDisconnect, onE
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout>()
+  const reconnectTimeoutRef = useRef<number>()
   const { token } = useAuthStore()
 
   useEffect(() => {
