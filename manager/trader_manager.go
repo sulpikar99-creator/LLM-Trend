@@ -207,7 +207,7 @@ func (tm *TraderManager) StartTrader(id, symbol, interval string) error {
 				// For now, we'll initialize with default config
 				// TODO: Parse aiConfigJSON and get user's AI model config
 				mt.DecisionEngine = decision.NewDecisionEngine(nil)
-				mt.DecisionLogger = logger.NewDecisionLogger(mt.DB)
+				mt.DecisionLogger = logger.NewDecisionLogger("decision_logs")
 				log.Printf("Trader %s: AI Decision Engine initialized", id)
 			}
 		}
