@@ -77,7 +77,8 @@ func SaveConfig(config *Config) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile("config.json", data, 0644); err != nil {
+	// Use 0600 permissions for security - config contains sensitive data like API keys
+	if err := os.WriteFile("config.json", data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

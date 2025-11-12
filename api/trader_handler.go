@@ -36,19 +36,39 @@ func (s *Server) handleListTraders(c *gin.Context) {
 		return
 	}
 
-	// Get traders from manager
-	managedTraders := s.app.TraderManager.ListTraders(userID)
+	// Get traders from database
+	rows, err := s.app.Database.DB.Query(`
+		SELECT id, name, exchange_type, symbol, interval, status, created_at, updated_at
+		FROM traders
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		errorResponse(c, http.StatusInternalServerError, "Failed to list traders")
+		return
+	}
+	defer rows.Close()
 
-	// Convert to response format
 	traders := []gin.H{}
-	for _, mt := range managedTraders {
-		traders = append(traders, mt.GetInfo())
+	for rows.Next() {
+		var id, name, exchangeType, symbol, interval, status, createdAt, updatedAt string
+		if err := rows.Scan(&id, &name, &exchangeType, &symbol, &interval, &status, &createdAt, &updatedAt); err != nil {
+			continue
+		}
+		traders = append(traders, gin.H{
+			"id":            id,
+			"user_id":       userID,
+			"name":          name,
+			"exchange_type": exchangeType,
+			"symbol":        symbol,
+			"interval":      interval,
+			"status":        status,
+			"created_at":    createdAt,
+			"updated_at":    updatedAt,
+		})
 	}
 
-	successResponse(c, gin.H{
-		"traders": traders,
-		"count":   len(traders),
-	})
+	successResponse(c, traders)
 }
 
 // handleCreateTrader creates a new trader
@@ -87,19 +107,27 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 		"api_secret_encrypted": apiSecretEncrypted,
 		"testnet":              req.Testnet,
 	}
-	exchangeConfigJSON, _ := json.Marshal(exchangeConfig)
+	exchangeConfigJSON, err := json.Marshal(exchangeConfig)
+	if err != nil {
+		errorResponse(c, http.StatusInternalServerError, "Failed to serialize exchange config")
+		return
+	}
 
 	// Create AI config JSON
 	aiConfig := map[string]interface{}{
 		"model_id": "deepseek-chat", // Default
 	}
-	aiConfigJSON, _ := json.Marshal(aiConfig)
+	aiConfigJSON, err := json.Marshal(aiConfig)
+	if err != nil {
+		errorResponse(c, http.StatusInternalServerError, "Failed to serialize AI config")
+		return
+	}
 
 	// Store in database
 	_, err = s.app.Database.DB.Exec(`
-		INSERT INTO traders (id, user_id, name, exchange_type, exchange_config, ai_config, strategy_prompt, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		traderID, userID, req.Name, req.ExchangeType, string(exchangeConfigJSON),
+		INSERT INTO traders (id, user_id, name, exchange_type, symbol, interval, exchange_config, ai_config, strategy_prompt, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		traderID, userID, req.Name, req.ExchangeType, req.Symbol, req.Interval, string(exchangeConfigJSON),
 		string(aiConfigJSON), req.StrategyPrompt, "stopped",
 	)
 	if err != nil {
@@ -287,27 +315,35 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 
 	traderID := c.Param("id")
 
-	var req StartTraderRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		errorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+	// Get symbol and interval from database
+	var symbol, interval, ownerID string
+	err := s.app.Database.DB.QueryRow(
+		"SELECT user_id, symbol, interval FROM traders WHERE id = ?", traderID,
+	).Scan(&ownerID, &symbol, &interval)
+	if err == sql.ErrNoRows {
+		errorResponse(c, http.StatusNotFound, "Trader not found")
 		return
 	}
-
-	// Get trader from manager
-	mt, err := s.app.TraderManager.GetTrader(traderID)
 	if err != nil {
-		errorResponse(c, http.StatusNotFound, "Trader not found")
+		errorResponse(c, http.StatusInternalServerError, "Database error")
 		return
 	}
 
 	// Check ownership
-	if mt.UserID != userID {
+	if ownerID != userID {
 		errorResponse(c, http.StatusForbidden, "Access denied")
 		return
 	}
 
+	// Get trader from manager
+	_, err = s.app.TraderManager.GetTrader(traderID)
+	if err != nil {
+		errorResponse(c, http.StatusNotFound, "Trader not found in manager")
+		return
+	}
+
 	// Start trader
-	if err := s.app.TraderManager.StartTrader(traderID, req.Symbol, req.Interval); err != nil {
+	if err := s.app.TraderManager.StartTrader(traderID, symbol, interval); err != nil {
 		errorResponse(c, http.StatusInternalServerError, "Failed to start trader: "+err.Error())
 		return
 	}

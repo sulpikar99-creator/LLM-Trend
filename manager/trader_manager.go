@@ -80,6 +80,124 @@ func (tm *TraderManager) SetDatabase(db *sql.DB) {
 	}
 }
 
+// LoadTradersFromDatabase loads all traders from database and adds them to the manager
+// This should be called during application startup to restore trader instances
+func (tm *TraderManager) LoadTradersFromDatabase(db *sql.DB, cryptoService interface{}) error {
+	log.Println("Loading traders from database...")
+
+	// Define CryptoService interface
+	type CryptoService interface {
+		DecryptAES(encrypted string) (string, error)
+	}
+
+	crypto, ok := cryptoService.(CryptoService)
+	if !ok {
+		return fmt.Errorf("invalid crypto service provided")
+	}
+
+	// Query all traders from database
+	rows, err := db.Query(`
+		SELECT id, user_id, name, exchange_type, symbol, interval, exchange_config
+		FROM traders
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to query traders: %w", err)
+	}
+	defer rows.Close()
+
+	loadedCount := 0
+	failedCount := 0
+
+	for rows.Next() {
+		var id, userID, name, exchangeType, symbol, interval string
+		var exchangeConfigJSON string
+
+		if err := rows.Scan(&id, &userID, &name, &exchangeType, &symbol, &interval, &exchangeConfigJSON); err != nil {
+			log.Printf("Error scanning trader row: %v", err)
+			failedCount++
+			continue
+		}
+
+		// Parse exchange config
+		var exchangeConfig map[string]interface{}
+		if err := json.Unmarshal([]byte(exchangeConfigJSON), &exchangeConfig); err != nil {
+			log.Printf("Error parsing exchange config for trader %s: %v", id, err)
+			failedCount++
+			continue
+		}
+
+		// Decrypt API credentials
+		apiKeyEncrypted, ok := exchangeConfig["api_key_encrypted"].(string)
+		if !ok {
+			log.Printf("Missing api_key_encrypted for trader %s", id)
+			failedCount++
+			continue
+		}
+
+		apiSecretEncrypted, ok := exchangeConfig["api_secret_encrypted"].(string)
+		if !ok {
+			log.Printf("Missing api_secret_encrypted for trader %s", id)
+			failedCount++
+			continue
+		}
+
+		apiKey, err := crypto.DecryptAES(apiKeyEncrypted)
+		if err != nil {
+			log.Printf("Failed to decrypt API key for trader %s: %v", id, err)
+			failedCount++
+			continue
+		}
+
+		apiSecret, err := crypto.DecryptAES(apiSecretEncrypted)
+		if err != nil {
+			log.Printf("Failed to decrypt API secret for trader %s: %v", id, err)
+			failedCount++
+			continue
+		}
+
+		// Get testnet setting
+		testnet := false
+		if testnetVal, ok := exchangeConfig["testnet"].(bool); ok {
+			testnet = testnetVal
+		}
+
+		// Create trader instance based on exchange type
+		var t trader.Trader
+		switch exchangeType {
+		case "binance_futures":
+			t = trader.NewBinanceFuturesTrader(name, apiKey, apiSecret, testnet)
+		default:
+			log.Printf("Unsupported exchange type %s for trader %s", exchangeType, id)
+			failedCount++
+			continue
+		}
+
+		// Add trader to manager
+		_, err = tm.AddTrader(id, userID, t)
+		if err != nil {
+			// If trader already exists (e.g., from a previous load), skip
+			if strings.Contains(err.Error(), "already exists") {
+				log.Printf("Trader %s already loaded, skipping", id)
+				continue
+			}
+			log.Printf("Failed to add trader %s to manager: %v", id, err)
+			failedCount++
+			continue
+		}
+
+		loadedCount++
+		log.Printf("Loaded trader %s (%s) for user %s - %s on %s", id, name, userID, symbol, exchangeType)
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating traders: %w", err)
+	}
+
+	log.Printf("Trader loading complete: %d loaded, %d failed", loadedCount, failedCount)
+	return nil
+}
+
 // AddTrader adds a trader to the manager
 func (tm *TraderManager) AddTrader(id, userID string, t trader.Trader) (*ManagedTrader, error) {
 	tm.mu.Lock()
@@ -190,11 +308,56 @@ func (tm *TraderManager) StartTrader(id, symbol, interval string) error {
 	mt.Status = TraderStatusStarting
 	mt.ErrorMessage = ""
 
+	// Get AI config and strategy prompt from database
+	if mt.DB != nil {
+		var aiConfigJSON, strategyPrompt sql.NullString
+		err := mt.DB.QueryRow(
+			"SELECT ai_config, strategy_prompt FROM traders WHERE id = ?", id,
+		).Scan(&aiConfigJSON, &strategyPrompt)
+
+		if err == nil {
+			if strategyPrompt.Valid {
+				mt.StrategyPrompt = strategyPrompt.String
+			}
+
+			// Initialize DecisionEngine with AI config
+			if aiConfigJSON.Valid && aiConfigJSON.String != "" {
+				// For now, we'll initialize with default config
+				// TODO: Parse aiConfigJSON and get user's AI model config
+				mt.DecisionEngine = decision.NewDecisionEngine(nil)
+				mt.DecisionLogger = logger.NewDecisionLogger("decision_logs")
+				log.Printf("Trader %s: AI Decision Engine initialized", id)
+			}
+		}
+	}
+
 	// Connect to exchange
+	log.Printf("⏳ Trader %s: Attempting to connect to %s...", id, mt.Trader.GetExchangeType())
 	if err := mt.Trader.Connect(mt.ctx); err != nil {
 		mt.Status = TraderStatusError
 		mt.ErrorMessage = fmt.Sprintf("Failed to connect: %v", err)
+		log.Printf("❌ Trader %s: Connection FAILED: %v", id, err)
 		return err
+	}
+	log.Printf("✅ Trader %s: Successfully connected to exchange", id)
+
+	// Initialize AccountRisk monitor with default conservative config
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	balance, err := mt.Trader.GetBalance(ctx)
+	if err == nil && balance != nil {
+		// Initialize with NOFX-style conservative defaults
+		riskConfig := risk.DefaultAccountRiskConfig()
+		mt.AccountRisk = risk.NewAccountRiskMonitor(riskConfig, balance.Balance)
+		log.Printf("Trader %s: Risk monitor initialized with balance $%.2f", id, balance.Balance)
+		log.Printf("Risk limits: Altcoin %dx, BTC/ETH %dx, Min volume $%.0fM, Max margin %.0f%%",
+			riskConfig.AltcoinMaxLeverage,
+			riskConfig.MajorCoinMaxLeverage,
+			riskConfig.MinVolumeUSD24h/1000000,
+			riskConfig.MaxMarginUtilization*100)
+	} else {
+		log.Printf("Warning: Failed to initialize risk monitor: %v", err)
 	}
 
 	// Start kline monitor if symbol specified
@@ -235,11 +398,121 @@ func (tm *TraderManager) StartTrader(id, symbol, interval string) error {
 			mt.Trader.Disconnect()
 			return err
 		}
+
+		log.Printf("Trader %s: Kline monitor started for %s %s", id, symbol, interval)
 	}
 
 	mt.Status = TraderStatusRunning
-	log.Printf("Trader %s started", id)
+	log.Printf("Trader %s started successfully", id)
+
+	// AUTO-ENABLE TRADING: Start AI decision loop automatically if DecisionEngine is initialized
+	if mt.DecisionEngine != nil && mt.DecisionLogger != nil {
+		mt.mu.Unlock() // Unlock before calling EnableAutoTrading which needs lock
+
+		// Get AI config from database or use default
+		var aiConfig *decision.AIConfig
+
+		// Try to get user's AI config from database
+		if mt.DB != nil {
+			var providerStr, model, apiKey, baseURL sql.NullString
+			var maxTokens sql.NullInt64
+			var temperature sql.NullFloat64
+
+			err := mt.DB.QueryRow(`
+				SELECT ai_provider, ai_model, ai_api_key, ai_base_url, ai_max_tokens, ai_temperature
+				FROM user_config
+				WHERE user_id = ?
+			`, mt.UserID).Scan(&providerStr, &model, &apiKey, &baseURL, &maxTokens, &temperature)
+
+			if err == nil && apiKey.Valid && apiKey.String != "" {
+				aiConfig = &decision.AIConfig{
+					Provider:    decision.AIProvider(providerStr.String),
+					Model:       model.String,
+					APIKey:      apiKey.String,
+					BaseURL:     baseURL.String,
+					MaxTokens:   int(maxTokens.Int64),
+					Temperature: float64(temperature.Float64),
+				}
+				log.Printf("Trader %s: Using user's AI config (%s - %s)", id, aiConfig.Provider, aiConfig.Model)
+			}
+		}
+
+		// If no user config, use default from environment
+		if aiConfig == nil {
+			defaultConfig := decision.GetDefaultAIConfig()
+			if defaultConfig != nil && defaultConfig.APIKey != "" {
+				aiConfig = defaultConfig
+				log.Printf("Trader %s: Using default AI config (%s - %s)", id, aiConfig.Provider, aiConfig.Model)
+			}
+		}
+
+		// Enable auto-trading if we have valid AI config
+		if aiConfig != nil && aiConfig.APIKey != "" {
+			systemPrompt := `You are an expert cryptocurrency trader. Analyze market data carefully and make informed decisions based on technical indicators, market trends, and risk management principles.`
+
+			// Use strategy prompt from database or default
+			strategyPrompt := mt.StrategyPrompt
+			if strategyPrompt == "" {
+				strategyPrompt = `Trading Rules:
+- Only trade when high confidence (>70%) based on technical indicators
+- Use RSI, MACD, Moving Averages for confirmation
+- Minimum risk/reward ratio of 1:2
+- Set stop loss 2-3% from entry
+- Set take profit 4-6% from entry
+- Never risk more than 2% per trade
+- Respect all risk limits and position sizing rules`
+			}
+
+			// Decision interval: 15 minutes default
+			decisionInterval := parseInterval(interval)
+			if decisionInterval < 1*time.Minute {
+				decisionInterval = 15 * time.Minute
+			}
+
+			// Start auto-trading
+			if err := mt.EnableAutoTrading(aiConfig, systemPrompt, strategyPrompt, decisionInterval); err != nil {
+				log.Printf("⚠️ Trader %s: Failed to enable auto-trading: %v", id, err)
+				log.Printf("Trader %s: Will run in MONITOR-ONLY mode (no automatic trades)", id)
+			} else {
+				log.Printf("🤖 Trader %s: AUTO-TRADING ENABLED - AI will make decisions every %v", id, decisionInterval)
+				log.Printf("📊 Trader %s: Self-evolution learning: ACTIVE", id)
+				log.Printf("🛡️ Trader %s: NOFX risk controls: ENFORCED", id)
+			}
+		} else {
+			log.Printf("⚠️ Trader %s: No AI API key configured - running in MONITOR-ONLY mode", id)
+			log.Printf("To enable auto-trading: Configure AI API key in Settings > AI Configuration", id)
+		}
+
+		mt.mu.Lock() // Re-lock before returning
+	}
+
 	return nil
+}
+
+// parseInterval converts interval string to duration
+func parseInterval(interval string) time.Duration {
+	switch interval {
+	case "1m":
+		return 1 * time.Minute
+	case "3m":
+		return 3 * time.Minute
+	case "5m":
+		return 5 * time.Minute
+	case "15m":
+		return 15 * time.Minute
+	case "30m":
+		return 30 * time.Minute
+	case "1h":
+		return 1 * time.Hour
+	case "2h":
+		return 2 * time.Hour
+	case "4h":
+		return 4 * time.Hour
+	case "1d":
+		return 24 * time.Hour
+	default:
+		return 15 * time.Minute
+	}
 }
 
 // StopTrader stops a trader
@@ -555,15 +828,93 @@ func (mt *ManagedTrader) gatherDecisionContext(ctx context.Context) (*decision.D
 		klines = mt.KlineMonitor.GetKlines()
 	}
 
-	// Get recent decisions (last 10)
+	// Get recent decisions (last 20 for self-evolution analysis)
 	recentDecisions := []*decision.DecisionRecord{}
 	if mt.DecisionLogger != nil {
-		decisions, err := mt.DecisionLogger.GetLatestDecisions(mt.ID, 10)
+		decisionsMap, err := mt.DecisionLogger.GetLatestDecisions(mt.ID, 20)
 		if err == nil {
-			// Convert to DecisionRecord (simplified)
-			for _, d := range decisions {
-				// We can parse these back if needed
-				_ = d
+			// Convert map[string]interface{} to DecisionRecord
+			for _, d := range decisionsMap {
+				record := &decision.DecisionRecord{}
+
+				// Parse basic fields
+				if id, ok := d["id"].(string); ok {
+					record.ID = id
+				}
+				if traderID, ok := d["trader_id"].(string); ok {
+					record.TraderID = traderID
+				}
+				if cycleNum, ok := d["cycle_number"].(float64); ok {
+					record.CycleNumber = int(cycleNum)
+				}
+				if timestamp, ok := d["timestamp"].(string); ok {
+					if t, err := time.Parse(time.RFC3339, timestamp); err == nil {
+						record.Timestamp = t
+					}
+				}
+
+				// Parse decision
+				if decisionData, ok := d["decision"].(map[string]interface{}); ok {
+					dec := &decision.TradingDecision{}
+					if action, ok := decisionData["action"].(string); ok {
+						dec.Action = decision.DecisionAction(action)
+					}
+					if symbol, ok := decisionData["symbol"].(string); ok {
+						dec.Symbol = symbol
+					}
+					if reasoning, ok := decisionData["reasoning"].(string); ok {
+						dec.Reasoning = reasoning
+					}
+					if confidence, ok := decisionData["confidence"].(float64); ok {
+						dec.Confidence = confidence
+					}
+					if sl, ok := decisionData["stop_loss"].(float64); ok {
+						dec.StopLoss = sl
+					}
+					if tp, ok := decisionData["take_profit"].(float64); ok {
+						dec.TakeProfit = tp
+					}
+					record.Decision = dec
+				}
+
+				// Parse account state
+				if accountData, ok := d["account_state"].(map[string]interface{}); ok {
+					acc := &decision.AccountSnapshot{}
+					if tb, ok := accountData["total_balance"].(float64); ok {
+						acc.TotalBalance = tb
+					}
+					if ab, ok := accountData["available_balance"].(float64); ok {
+						acc.AvailableBalance = ab
+					}
+					if up, ok := accountData["unrealized_pnl"].(float64); ok {
+						acc.UnrealizedPnL = up
+					}
+					record.AccountState = acc
+				}
+
+				// Parse position snapshots
+				if positionsData, ok := d["position_snapshots"].([]interface{}); ok {
+					for _, posData := range positionsData {
+						if posMap, ok := posData.(map[string]interface{}); ok {
+							pos := &decision.PositionSnapshot{}
+							if symbol, ok := posMap["symbol"].(string); ok {
+								pos.Symbol = symbol
+							}
+							if side, ok := posMap["side"].(string); ok {
+								pos.Side = side
+							}
+							if up, ok := posMap["unrealized_pnl"].(float64); ok {
+								pos.UnrealizedPnL = up
+							}
+							if upp, ok := posMap["unrealized_pnl_pct"].(float64); ok {
+								pos.UnrealizedPnLPct = upp
+							}
+							record.PositionSnapshots = append(record.PositionSnapshots, pos)
+						}
+					}
+				}
+
+				recentDecisions = append(recentDecisions, record)
 			}
 		}
 	}
@@ -651,6 +1002,7 @@ func (mt *ManagedTrader) openPosition(ctx context.Context, dec *decision.Trading
 		// Check if trading is allowed
 		canTrade, reason := mt.AccountRisk.CanTrade()
 		if !canTrade {
+			log.Printf("Risk check failed: %s", reason)
 			return fmt.Errorf("risk check failed: %s", reason)
 		}
 
@@ -665,27 +1017,65 @@ func (mt *ManagedTrader) openPosition(ctx context.Context, dec *decision.Trading
 			totalExposure += pos.Notional
 		}
 
-		// Get current market price for size estimation
+		// Get current market price and balance
 		balance, err := mt.Trader.GetBalance(ctx)
 		if err == nil && mt.AccountRisk != nil {
 			mt.AccountRisk.UpdateBalance(balance.Balance)
 		}
 
-		// Estimate position size (using decision size as approximation)
-		positionSizeUSD := dec.Size * 50000.0 // Rough estimate, will be refined
+		// Get market data for current price
+		marketData, err := mt.GetMarketData()
+		if err != nil {
+			return fmt.Errorf("failed to get market data: %w", err)
+		}
+
+		// Calculate actual position size in USD
+		currentPrice := marketData.Price
+		positionSizeUSD := dec.Size * currentPrice * float64(dec.Leverage)
+
+		// Check position limits
 		canOpen, reason := mt.AccountRisk.CanOpenPosition(positionSizeUSD, len(positions), totalExposure)
 		if !canOpen {
-			return fmt.Errorf("risk check failed: %s", reason)
+			log.Printf("Position limit check failed: %s", reason)
+			return fmt.Errorf("position limit check failed: %s", reason)
 		}
 
-		// Validate leverage
-		canUseLeverage, reason := mt.AccountRisk.ValidateLeverage(dec.Symbol, dec.Leverage)
+		// Validate leverage based on symbol type (NOFX-style: 2x altcoins, 10x BTC/ETH)
+		canUseLeverage, reason := mt.AccountRisk.ValidateLeverageForSymbol(dec.Symbol, dec.Leverage)
 		if !canUseLeverage {
-			return fmt.Errorf("leverage check failed: %s", reason)
+			log.Printf("Leverage validation failed: %s", reason)
+			return fmt.Errorf("leverage validation failed: %s", reason)
 		}
 
-		// Record trade
+		// Validate stop-loss ratio (NOFX-style: minimum 1:2 SL:TP)
+		isLong := side == trader.OrderSideBuy
+		canSLTP, reason := mt.AccountRisk.ValidateStopLossRatio(currentPrice, dec.StopLoss, dec.TakeProfit, isLong)
+		if !canSLTP {
+			log.Printf("Stop-loss ratio validation failed: %s", reason)
+			return fmt.Errorf("stop-loss ratio validation failed: %s", reason)
+		}
+
+		// Validate volume (NOFX-style: minimum $15M daily volume)
+		volume24hUSD := marketData.Volume24h
+		canVolume, reason := mt.AccountRisk.ValidateVolume(volume24hUSD, dec.Symbol)
+		if !canVolume {
+			log.Printf("Volume validation failed: %s", reason)
+			return fmt.Errorf("volume validation failed: %s", reason)
+		}
+
+		// Validate margin utilization (NOFX-style: max 90%)
+		if balance != nil {
+			marginUsed := balance.Balance - balance.AvailableBalance
+			canMargin, reason := mt.AccountRisk.ValidateMarginUtilization(balance.Balance, marginUsed)
+			if !canMargin {
+				log.Printf("Margin utilization check failed: %s", reason)
+				return fmt.Errorf("margin utilization check failed: %s", reason)
+			}
+		}
+
+		// All risk checks passed, record trade
 		mt.AccountRisk.RecordTrade()
+		log.Printf("✅ All risk checks passed for %s %s position", dec.Symbol, side)
 	}
 
 	// Set leverage first

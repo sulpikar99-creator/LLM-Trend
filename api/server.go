@@ -9,13 +9,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sulpikar99-creator/LLM-Trend/bootstrap"
+	"github.com/sulpikar99-creator/LLM-Trend/market"
 )
 
 // Server represents the HTTP server
 type Server struct {
-	Router      *gin.Engine
-	app         *bootstrap.Application
-	rateLimiter *RateLimiter
+	Router            *gin.Engine
+	app               *bootstrap.Application
+	rateLimiter       *RateLimiter
+	wsHub             *market.Hub
+	cleanupCtx        context.Context
+	cleanupCancelFunc context.CancelFunc
 }
 
 // NewServer creates a new HTTP server
@@ -25,6 +29,9 @@ func NewServer(app *bootstrap.Application) *Server {
 
 	// Create rate limiter (10 requests per second, burst of 20)
 	rateLimiter := NewRateLimiter(10, 20)
+
+	// Create WebSocket hub
+	wsHub := market.NewHub()
 
 	// Apply global middleware in order
 	router.Use(RecoveryMiddleware())                           // Recover from panics
@@ -37,17 +44,26 @@ func NewServer(app *bootstrap.Application) *Server {
 	router.Use(rateLimiter.RateLimitMiddleware())              // Rate limiting per IP
 	router.Use(RequestSizeLimitMiddleware(10 * 1024 * 1024))   // 10MB request size limit
 
+	// Create cancellable context for cleanup goroutines
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+
 	server := &Server{
-		Router:      router,
-		app:         app,
-		rateLimiter: rateLimiter,
+		Router:            router,
+		app:               app,
+		rateLimiter:       rateLimiter,
+		wsHub:             wsHub,
+		cleanupCtx:        cleanupCtx,
+		cleanupCancelFunc: cleanupCancel,
 	}
 
 	// Setup routes
 	server.setupRoutes()
 
-	// Start rate limiter cleanup goroutine
-	go rateLimiter.CleanupOldVisitors(context.Background())
+	// Start WebSocket hub
+	go wsHub.Run()
+
+	// Start rate limiter cleanup goroutine with cancellable context
+	go rateLimiter.CleanupOldVisitors(cleanupCtx)
 
 	return server
 }
@@ -116,6 +132,11 @@ func (s *Server) setupRoutes() {
 		protected.PUT("/user/config/notifications", s.handleUpdateNotificationSettings)
 		protected.POST("/user/config/reset", s.handleResetUserConfig)
 		protected.GET("/user/ai-providers", s.handleGetAvailableAIProviders)
+
+		// WebSocket routes
+		protected.GET("/ws/traders/:trader_id", s.handleWebSocket)
+		protected.GET("/ws/all", s.handleWebSocketAll)
+		protected.GET("/ws/stats", s.handleWebSocketStats)
 	}
 
 	// Admin routes (require authentication + admin role)
@@ -174,4 +195,11 @@ func errorResponse(c *gin.Context, statusCode int, message string) {
 		"success": false,
 		"error":   message,
 	})
+}
+
+// Shutdown gracefully stops all server goroutines
+func (s *Server) Shutdown() {
+	if s.cleanupCancelFunc != nil {
+		s.cleanupCancelFunc()
+	}
 }

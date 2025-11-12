@@ -1,57 +1,80 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import LoginPage from './pages/LoginPage'
-import Dashboard from './pages/Dashboard'
-import TradersPage from './pages/TradersPage'
-import AnalyticsPage from './pages/AnalyticsPage'
-import SettingsPage from './pages/SettingsPage'
-import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { useAuthStore } from '@/stores/authStore'
+import { Layout } from '@/components/Layout'
+import LoginPage from '@/pages/LoginPage'
+import Dashboard from '@/pages/Dashboard'
+import TradersPage from '@/pages/TradersPage'
+import TraderDetailPage from '@/pages/TraderDetailPage'
+import AnalyticsPage from '@/pages/AnalyticsPage'
+import SettingsPage from '@/pages/SettingsPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth()
-  return isAuthenticated ? <>{children}</> : <Navigate to="/login" />
+  const { isAuthenticated } = useAuthStore()
+  return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
 }
 
 function App() {
+  const { isAuthenticated } = useAuthStore()
+
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
+    <BrowserRouter>
+      <Routes>
+        <Route
+          path="/login"
+          element={isAuthenticated ? <Navigate to="/" replace /> : <LoginPage />}
+        />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <Layout>
                 <Dashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/traders"
-            element={
-              <ProtectedRoute>
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/traders"
+          element={
+            <ProtectedRoute>
+              <Layout>
                 <TradersPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/analytics"
-            element={
-              <ProtectedRoute>
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/traders/:id"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <TraderDetailPage />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/analytics"
+          element={
+            <ProtectedRoute>
+              <Layout>
                 <AnalyticsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <ProtectedRoute>
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <Layout>
                 <SettingsPage />
-              </ProtectedRoute>
-            }
-          />
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </BrowserRouter>
   )
 }
 

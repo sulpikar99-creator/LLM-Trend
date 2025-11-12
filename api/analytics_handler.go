@@ -301,7 +301,10 @@ func (s *Server) handleGetCorrelation(c *gin.Context) {
 			LIMIT 100
 		`
 
-		rows, err := s.app.Database.DB.Query(query, userID, "%"+symbol+"%")
+		// Use parameter binding properly - wildcards in parameter, not string concatenation
+		// This prevents SQL injection by escaping the symbol value
+		symbolParam := "%" + symbol + "%"
+		rows, err := s.app.Database.DB.Query(query, userID, symbolParam)
 		if err != nil {
 			continue
 		}

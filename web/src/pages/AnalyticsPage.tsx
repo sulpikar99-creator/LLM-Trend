@@ -1,490 +1,357 @@
-import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../contexts/AuthContext'
-import { api } from '../lib/api'
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { motion } from 'framer-motion'
+import {
+  LineChart,
+  Line,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts'
+import { Activity, DollarSign, Target, AlertTriangle } from 'lucide-react'
+import { api } from '@/lib/api'
+import { Card } from '@/components/ui/Card'
+import { Select } from '@/components/ui/Select'
 
 export default function AnalyticsPage() {
-  const { user, logout } = useAuth()
-  const navigate = useNavigate()
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [activeTab, setActiveTab] = useState<'performance' | 'drawdown' | 'montecarlo' | 'correlation'>('performance')
+  const [selectedTrader, setSelectedTrader] = useState<string>('all')
+  const [timeRange, setTimeRange] = useState<string>('7d')
 
-  // Performance data
-  const [performanceData, setPerformanceData] = useState<any>(null)
-  const [drawdownData, setDrawdownData] = useState<any>(null)
-  const [monteCarloData, setMonteCarloData] = useState<any>(null)
-  const [correlationData, setCorrelationData] = useState<any>(null)
+  const { data: tradersData } = useQuery({
+    queryKey: ['traders'],
+    queryFn: () => api.listTraders(),
+  })
 
-  useEffect(() => {
-    loadAnalytics()
-  }, [])
+  const { data: performanceData, isLoading: isPerfLoading } = useQuery({
+    queryKey: ['performance', selectedTrader],
+    queryFn: () => api.getPerformance(selectedTrader === 'all' ? undefined : selectedTrader),
+  })
 
-  const loadAnalytics = async () => {
-    try {
-      setLoading(true)
-      setError('')
+  const traders = Array.isArray(tradersData?.data) ? tradersData.data : []
+  const performance = performanceData?.data
 
-      // Load all analytics data in parallel
-      const [perfResp, ddResp, mcResp, corrResp] = await Promise.all([
-        api.getPerformance().catch(() => ({ data: null })),
-        api.getDrawdown().catch(() => ({ data: null })),
-        api.getMonteCarlo().catch(() => ({ data: null })),
-        api.getCorrelation().catch(() => ({ data: null })),
-      ])
+  // Extract metrics
+  const metrics = performance?.overall_metrics || {}
+  const traderStats = Array.isArray(performance?.trader_stats) ? performance.trader_stats : []
+  const pnlHistory = Array.isArray(performance?.pnl_history) ? performance.pnl_history : []
+  const drawdownHistory = Array.isArray(performance?.drawdown_history) ? performance.drawdown_history : []
 
-      setPerformanceData(perfResp.data)
-      setDrawdownData(ddResp.data)
-      setMonteCarloData(mcResp.data)
-      setCorrelationData(corrResp.data)
-    } catch (err: any) {
-      setError(err.message || 'Failed to load analytics')
-    } finally {
-      setLoading(false)
-    }
-  }
+  // Calculate win/loss distribution
+  const winLossData = [
+    { name: 'Wins', value: metrics.total_wins || 0, color: '#10b981' },
+    { name: 'Losses', value: metrics.total_losses || 0, color: '#ef4444' },
+  ]
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(value)
-  }
+  // Stats cards
+  const statCards = [
+    {
+      title: 'Total P&L',
+      value: `$${(metrics.total_pnl || 0).toFixed(2)}`,
+      change: metrics.total_pnl >= 0 ? '+' : '',
+      icon: DollarSign,
+      color: metrics.total_pnl >= 0 ? 'text-success' : 'text-danger',
+      bgColor: metrics.total_pnl >= 0 ? 'bg-success/10' : 'bg-danger/10',
+    },
+    {
+      title: 'Win Rate',
+      value: `${((metrics.win_rate || 0) * 100).toFixed(1)}%`,
+      change: metrics.win_rate >= 0.5 ? 'Above Average' : 'Below Average',
+      icon: Target,
+      color: metrics.win_rate >= 0.5 ? 'text-success' : 'text-warning',
+      bgColor: metrics.win_rate >= 0.5 ? 'bg-success/10' : 'bg-warning/10',
+    },
+    {
+      title: 'Total Trades',
+      value: (metrics.total_trades || 0).toString(),
+      change: `${metrics.total_wins || 0}W / ${metrics.total_losses || 0}L`,
+      icon: Activity,
+      color: 'text-primary',
+      bgColor: 'bg-primary/10',
+    },
+    {
+      title: 'Max Drawdown',
+      value: `${((metrics.max_drawdown || 0) * 100).toFixed(2)}%`,
+      change: metrics.max_drawdown < 0.2 ? 'Good' : 'High Risk',
+      icon: AlertTriangle,
+      color: metrics.max_drawdown < 0.2 ? 'text-success' : 'text-danger',
+      bgColor: metrics.max_drawdown < 0.2 ? 'bg-success/10' : 'bg-danger/10',
+    },
+  ]
 
-  const formatPercent = (value: number) => {
-    return `${(value * 100).toFixed(2)}%`
-  }
+  // Format P&L history for chart
+  const pnlChartData = pnlHistory.map((item: any) => ({
+    time: new Date(item.timestamp).toLocaleDateString(),
+    pnl: item.cumulative_pnl,
+    daily: item.daily_pnl,
+  }))
+
+  // Format drawdown history for chart
+  const drawdownChartData = drawdownHistory.map((item: any) => ({
+    time: new Date(item.timestamp).toLocaleDateString(),
+    drawdown: item.drawdown_percent * 100,
+  }))
+
+  // Format trader performance for comparison
+  const traderComparisonData = traderStats.map((stat: any) => ({
+    name: stat.trader_name || 'Unknown',
+    pnl: stat.total_pnl || 0,
+    trades: stat.total_trades || 0,
+    winRate: (stat.win_rate || 0) * 100,
+  }))
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Navigation */}
-      <nav className="bg-card border-b border-border">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16 items-center">
-            <div className="flex items-center space-x-8">
-              <h1 className="text-xl font-bold text-primary">LLM Trend</h1>
-              <div className="flex space-x-4">
-                <button
-                  onClick={() => navigate('/')}
-                  className="text-gray-400 hover:text-white"
-                >
-                  Dashboard
-                </button>
-                <button
-                  onClick={() => navigate('/traders')}
-                  className="text-gray-400 hover:text-white"
-                >
-                  Traders
-                </button>
-                <button
-                  onClick={() => navigate('/analytics')}
-                  className="text-primary font-semibold"
-                >
-                  Analytics
-                </button>
-                <button
-                  onClick={() => navigate('/settings')}
-                  className="text-gray-400 hover:text-white"
-                >
-                  Settings
-                </button>
-              </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              <span className="text-gray-400">Welcome, {user?.username}</span>
-              <button
-                onClick={logout}
-                className="px-4 py-2 bg-danger hover:bg-danger/90 text-white rounded"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-4xl font-bold mb-2">Analytics</h1>
+          <p className="text-gray-400">Deep dive into your trading performance</p>
         </div>
-      </nav>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold">Analytics</h2>
-          <p className="text-gray-400 mt-2">Comprehensive trading performance analysis</p>
+        <div className="flex space-x-4">
+          <Select
+            value={selectedTrader}
+            onChange={(e) => setSelectedTrader(e.target.value)}
+            label=""
+            options={[
+              { value: 'all', label: 'All Traders' },
+              ...traders.map((t) => ({ value: t.id, label: t.name })),
+            ]}
+          />
+          <Select
+            value={timeRange}
+            onChange={(e) => setTimeRange(e.target.value)}
+            label=""
+            options={[
+              { value: '24h', label: 'Last 24 Hours' },
+              { value: '7d', label: 'Last 7 Days' },
+              { value: '30d', label: 'Last 30 Days' },
+              { value: 'all', label: 'All Time' },
+            ]}
+          />
         </div>
+      </div>
 
-        {error && (
-          <div className="mb-6 bg-danger/10 border border-danger text-danger px-4 py-3 rounded">
-            {error}
-          </div>
-        )}
-
-        {/* Tabs */}
-        <div className="flex space-x-2 mb-6 border-b border-border">
-          <button
-            onClick={() => setActiveTab('performance')}
-            className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-              activeTab === 'performance'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-gray-400 hover:text-white'
-            }`}
-          >
-            Performance
-          </button>
-          <button
-            onClick={() => setActiveTab('drawdown')}
-            className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-              activeTab === 'drawdown'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-gray-400 hover:text-white'
-            }`}
-          >
-            Drawdown
-          </button>
-          <button
-            onClick={() => setActiveTab('montecarlo')}
-            className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-              activeTab === 'montecarlo'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-gray-400 hover:text-white'
-            }`}
-          >
-            Monte Carlo
-          </button>
-          <button
-            onClick={() => setActiveTab('correlation')}
-            className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-              activeTab === 'correlation'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-gray-400 hover:text-white'
-            }`}
-          >
-            Correlation
-          </button>
+      {isPerfLoading ? (
+        <div className="text-center py-12">
+          <p className="text-gray-400">Loading analytics...</p>
         </div>
-
-        {loading ? (
-          <div className="text-center py-12">
-            <p className="text-gray-400">Loading analytics...</p>
+      ) : (
+        <>
+          {/* Stats Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {statCards.map((stat, index) => {
+              const Icon = stat.icon
+              return (
+                <motion.div
+                  key={stat.title}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                >
+                  <Card hover>
+                    <div className="flex items-center justify-between mb-4">
+                      <div className={`p-3 rounded-xl ${stat.bgColor}`}>
+                        <Icon className={`w-6 h-6 ${stat.color}`} />
+                      </div>
+                    </div>
+                    <p className="text-sm text-gray-400 mb-1">{stat.title}</p>
+                    <p className={`text-2xl font-bold ${stat.color} mb-1`}>{stat.value}</p>
+                    <p className="text-xs text-gray-500">{stat.change}</p>
+                  </Card>
+                </motion.div>
+              )
+            })}
           </div>
-        ) : (
-          <>
-            {/* Performance Tab */}
-            {activeTab === 'performance' && (
-              <div className="space-y-6">
-                {performanceData && performanceData.overall_metrics ? (
-                  <>
-                    {/* Overall Metrics */}
-                    <div className="bg-card border border-border rounded-lg p-6">
-                      <h3 className="text-xl font-bold mb-4">Overall Performance</h3>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Total P&L</p>
-                          <p className={`text-2xl font-bold ${performanceData.overall_metrics.total_pnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                            {formatCurrency(performanceData.overall_metrics.total_pnl || 0)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Total Trades</p>
-                          <p className="text-2xl font-bold">{performanceData.total_trades || 0}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Win Rate</p>
-                          <p className="text-2xl font-bold text-primary">
-                            {formatPercent(performanceData.overall_metrics.win_rate || 0)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Profit Factor</p>
-                          <p className="text-2xl font-bold">
-                            {(performanceData.overall_metrics.profit_factor || 0).toFixed(2)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Sharpe Ratio</p>
-                          <p className="text-2xl font-bold">
-                            {(performanceData.overall_metrics.sharpe_ratio || 0).toFixed(2)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Avg Win</p>
-                          <p className="text-2xl font-bold text-green-500">
-                            {formatCurrency(performanceData.overall_metrics.avg_win || 0)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Avg Loss</p>
-                          <p className="text-2xl font-bold text-red-500">
-                            {formatCurrency(performanceData.overall_metrics.avg_loss || 0)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Max Streak</p>
-                          <p className="text-2xl font-bold">
-                            {performanceData.overall_metrics.max_consecutive_wins || 0}W /
-                            {performanceData.overall_metrics.max_consecutive_losses || 0}L
-                          </p>
-                        </div>
-                      </div>
-                    </div>
 
-                    {/* By Symbol */}
-                    {performanceData.by_symbol && Object.keys(performanceData.by_symbol).length > 0 && (
-                      <div className="bg-card border border-border rounded-lg p-6">
-                        <h3 className="text-xl font-bold mb-4">Performance by Symbol</h3>
-                        <div className="overflow-x-auto">
-                          <table className="w-full">
-                            <thead>
-                              <tr className="border-b border-border">
-                                <th className="text-left py-2 px-4 text-gray-400">Symbol</th>
-                                <th className="text-right py-2 px-4 text-gray-400">Trades</th>
-                                <th className="text-right py-2 px-4 text-gray-400">P&L</th>
-                                <th className="text-right py-2 px-4 text-gray-400">Win Rate</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {Object.entries(performanceData.by_symbol).map(([symbol, data]: [string, any]) => (
-                                <tr key={symbol} className="border-b border-border/50">
-                                  <td className="py-2 px-4 font-medium">{symbol}</td>
-                                  <td className="text-right py-2 px-4">{data.trades || 0}</td>
-                                  <td className={`text-right py-2 px-4 font-bold ${data.total_pnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                                    {formatCurrency(data.total_pnl || 0)}
-                                  </td>
-                                  <td className="text-right py-2 px-4">{formatPercent(data.win_rate || 0)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
+          {/* Cumulative P&L Chart */}
+          {pnlChartData.length > 0 && (
+            <Card>
+              <h3 className="text-xl font-bold mb-6">Cumulative P&L Over Time</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <AreaChart data={pnlChartData}>
+                  <defs>
+                    <linearGradient id="colorPnl" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="time" stroke="#9ca3af" />
+                  <YAxis stroke="#9ca3af" />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#1f2937',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                    }}
+                  />
+                  <Legend />
+                  <Area
+                    type="monotone"
+                    dataKey="pnl"
+                    stroke="#6366f1"
+                    fillOpacity={1}
+                    fill="url(#colorPnl)"
+                    name="Cumulative P&L ($)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </Card>
+          )}
 
-                    {/* Top/Worst Performers */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {performanceData.top_performers && performanceData.top_performers.length > 0 && (
-                        <div className="bg-card border border-border rounded-lg p-6">
-                          <h3 className="text-xl font-bold mb-4 text-green-500">Top Performers</h3>
-                          <div className="space-y-2">
-                            {performanceData.top_performers.map((item: any, idx: number) => (
-                              <div key={idx} className="flex justify-between items-center">
-                                <span className="text-gray-400">{item.name}</span>
-                                <span className="text-green-500 font-bold">{formatCurrency(item.pnl)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {performanceData.worst_performers && performanceData.worst_performers.length > 0 && (
-                        <div className="bg-card border border-border rounded-lg p-6">
-                          <h3 className="text-xl font-bold mb-4 text-red-500">Worst Performers</h3>
-                          <div className="space-y-2">
-                            {performanceData.worst_performers.map((item: any, idx: number) => (
-                              <div key={idx} className="flex justify-between items-center">
-                                <span className="text-gray-400">{item.name}</span>
-                                <span className="text-red-500 font-bold">{formatCurrency(item.pnl)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <div className="bg-card border border-border rounded-lg p-12 text-center">
-                    <p className="text-gray-400">No performance data available yet. Start trading to see analytics!</p>
-                  </div>
-                )}
-              </div>
+          {/* Drawdown Chart */}
+          {drawdownChartData.length > 0 && (
+            <Card>
+              <h3 className="text-xl font-bold mb-6">Drawdown Analysis</h3>
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart data={drawdownChartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="time" stroke="#9ca3af" />
+                  <YAxis stroke="#9ca3af" />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#1f2937',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                    }}
+                  />
+                  <Legend />
+                  <Line
+                    type="monotone"
+                    dataKey="drawdown"
+                    stroke="#ef4444"
+                    strokeWidth={2}
+                    name="Drawdown (%)"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </Card>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Win/Loss Distribution */}
+            {winLossData.some((d) => d.value > 0) && (
+              <Card>
+                <h3 className="text-xl font-bold mb-6">Win/Loss Distribution</h3>
+                <ResponsiveContainer width="100%" height={250}>
+                  <PieChart>
+                    <Pie
+                      data={winLossData}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      label={({ name, value }) => `${name}: ${value}`}
+                      outerRadius={80}
+                      fill="#8884d8"
+                      dataKey="value"
+                    >
+                      {winLossData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </Card>
             )}
 
-            {/* Drawdown Tab */}
-            {activeTab === 'drawdown' && (
-              <div className="space-y-6">
-                {drawdownData && drawdownData.drawdown_analysis ? (
-                  <>
-                    <div className="bg-card border border-border rounded-lg p-6">
-                      <h3 className="text-xl font-bold mb-4">Drawdown Analysis</h3>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Max Drawdown</p>
-                          <p className="text-2xl font-bold text-red-500">
-                            {formatPercent(drawdownData.drawdown_analysis.max_drawdown || 0)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Current Drawdown</p>
-                          <p className="text-2xl font-bold">
-                            {formatPercent(drawdownData.drawdown_analysis.current_drawdown || 0)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Max DD Duration</p>
-                          <p className="text-2xl font-bold">
-                            {(drawdownData.drawdown_analysis.max_drawdown_duration || 0).toFixed(0)} days
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Recovery Time</p>
-                          <p className="text-2xl font-bold">
-                            {(drawdownData.drawdown_analysis.recovery_time || 0).toFixed(0)} days
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {drawdownData.equity_points && drawdownData.equity_points.length > 0 && (
-                      <div className="bg-card border border-border rounded-lg p-6">
-                        <h3 className="text-xl font-bold mb-4">Equity Curve</h3>
-                        <p className="text-gray-400">
-                          Tracking {drawdownData.equity_points.length} data points
-                        </p>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="bg-card border border-border rounded-lg p-12 text-center">
-                    <p className="text-gray-400">No drawdown data available yet. Trading history is needed for drawdown analysis.</p>
-                  </div>
-                )}
-              </div>
+            {/* Trader Comparison */}
+            {traderComparisonData.length > 0 && (
+              <Card>
+                <h3 className="text-xl font-bold mb-6">Trader Performance Comparison</h3>
+                <ResponsiveContainer width="100%" height={250}>
+                  <BarChart data={traderComparisonData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis dataKey="name" stroke="#9ca3af" />
+                    <YAxis stroke="#9ca3af" />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#1f2937',
+                        border: '1px solid #374151',
+                        borderRadius: '8px',
+                      }}
+                    />
+                    <Legend />
+                    <Bar dataKey="pnl" fill="#6366f1" name="P&L ($)" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </Card>
             )}
+          </div>
 
-            {/* Monte Carlo Tab */}
-            {activeTab === 'montecarlo' && (
-              <div className="space-y-6">
-                {monteCarloData ? (
-                  <>
-                    <div className="bg-card border border-border rounded-lg p-6">
-                      <h3 className="text-xl font-bold mb-4">Monte Carlo Simulation Results</h3>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Profit Probability</p>
-                          <p className="text-2xl font-bold text-green-500">
-                            {formatPercent(monteCarloData.probability_profit || 0)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Loss Probability</p>
-                          <p className="text-2xl font-bold text-red-500">
-                            {formatPercent(monteCarloData.probability_loss || 0)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">VaR (95%)</p>
-                          <p className="text-2xl font-bold">
-                            {formatCurrency(monteCarloData.var_95 || 0)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">VaR (99%)</p>
-                          <p className="text-2xl font-bold">
-                            {formatCurrency(monteCarloData.var_99 || 0)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {monteCarloData.summary && (
-                      <div className="bg-card border border-border rounded-lg p-6">
-                        <h3 className="text-xl font-bold mb-4">Summary</h3>
-                        <pre className="text-gray-400 whitespace-pre-wrap text-sm">
-                          {monteCarloData.summary}
-                        </pre>
-                      </div>
-                    )}
-
-                    {monteCarloData.config && (
-                      <div className="bg-card border border-border rounded-lg p-6">
-                        <h3 className="text-xl font-bold mb-4">Simulation Parameters</h3>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                          <div>
-                            <p className="text-gray-400">Simulations</p>
-                            <p className="font-bold">{monteCarloData.config.num_simulations}</p>
-                          </div>
-                          <div>
-                            <p className="text-gray-400">Periods</p>
-                            <p className="font-bold">{monteCarloData.config.num_periods}</p>
-                          </div>
-                          <div>
-                            <p className="text-gray-400">Initial Balance</p>
-                            <p className="font-bold">{formatCurrency(monteCarloData.config.initial_balance)}</p>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="bg-card border border-border rounded-lg p-12 text-center">
-                    <p className="text-gray-400">No Monte Carlo simulation data available.</p>
-                  </div>
-                )}
+          {/* Performance Metrics Table */}
+          {traderStats.length > 0 && (
+            <Card>
+              <h3 className="text-xl font-bold mb-6">Detailed Trader Statistics</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-3 px-4 font-semibold text-gray-400">Trader</th>
+                      <th className="text-right py-3 px-4 font-semibold text-gray-400">P&L</th>
+                      <th className="text-right py-3 px-4 font-semibold text-gray-400">Trades</th>
+                      <th className="text-right py-3 px-4 font-semibold text-gray-400">Win Rate</th>
+                      <th className="text-right py-3 px-4 font-semibold text-gray-400">Avg Win</th>
+                      <th className="text-right py-3 px-4 font-semibold text-gray-400">Avg Loss</th>
+                      <th className="text-right py-3 px-4 font-semibold text-gray-400">Sharpe Ratio</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {traderStats.map((stat: any, index: number) => (
+                      <tr key={index} className="border-b border-border/50 hover:bg-white/5">
+                        <td className="py-3 px-4 font-medium">{stat.trader_name || 'Unknown'}</td>
+                        <td
+                          className={`py-3 px-4 text-right font-semibold ${
+                            stat.total_pnl >= 0 ? 'text-success' : 'text-danger'
+                          }`}
+                        >
+                          ${(stat.total_pnl || 0).toFixed(2)}
+                        </td>
+                        <td className="py-3 px-4 text-right">{stat.total_trades || 0}</td>
+                        <td className="py-3 px-4 text-right">
+                          {((stat.win_rate || 0) * 100).toFixed(1)}%
+                        </td>
+                        <td className="py-3 px-4 text-right text-success">
+                          ${(stat.avg_win || 0).toFixed(2)}
+                        </td>
+                        <td className="py-3 px-4 text-right text-danger">
+                          ${(stat.avg_loss || 0).toFixed(2)}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {(stat.sharpe_ratio || 0).toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )}
+            </Card>
+          )}
 
-            {/* Correlation Tab */}
-            {activeTab === 'correlation' && (
-              <div className="space-y-6">
-                {correlationData && correlationData.matrix ? (
-                  <>
-                    <div className="bg-card border border-border rounded-lg p-6">
-                      <h3 className="text-xl font-bold mb-4">Correlation Statistics</h3>
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Avg Correlation</p>
-                          <p className="text-2xl font-bold">
-                            {(correlationData.avg_correlation || 0).toFixed(3)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Max Correlation</p>
-                          <p className="text-2xl font-bold text-green-500">
-                            {(correlationData.max_correlation || 0).toFixed(3)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-400 mb-1">Min Correlation</p>
-                          <p className="text-2xl font-bold text-red-500">
-                            {(correlationData.min_correlation || 0).toFixed(3)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {correlationData.top_correlations && correlationData.top_correlations.length > 0 && (
-                      <div className="bg-card border border-border rounded-lg p-6">
-                        <h3 className="text-xl font-bold mb-4">Top Correlations</h3>
-                        <div className="space-y-2">
-                          {correlationData.top_correlations.map((corr: any, idx: number) => (
-                            <div key={idx} className="flex justify-between items-center border-b border-border/50 pb-2">
-                              <span className="text-gray-400">{corr.pair || `Pair ${idx + 1}`}</span>
-                              <span className={`font-bold ${corr.value >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                                {(corr.value || 0).toFixed(3)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {correlationData.summary && (
-                      <div className="bg-card border border-border rounded-lg p-6">
-                        <h3 className="text-xl font-bold mb-4">Analysis Summary</h3>
-                        <p className="text-gray-400 whitespace-pre-wrap">{correlationData.summary}</p>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="bg-card border border-border rounded-lg p-12 text-center">
-                    <p className="text-gray-400 mb-2">
-                      {correlationData?.message || 'No correlation data available yet.'}
-                    </p>
-                    {correlationData?.note && (
-                      <p className="text-sm text-gray-500">{correlationData.note}</p>
-                    )}
-                  </div>
-                )}
+          {/* No Data State */}
+          {!performance || (traderStats.length === 0 && pnlHistory.length === 0) && (
+            <Card>
+              <div className="text-center py-12">
+                <Activity className="w-16 h-16 text-gray-600 mx-auto mb-4" />
+                <p className="text-gray-400 mb-2">No trading data available yet</p>
+                <p className="text-gray-500 text-sm">
+                  Start your traders to see performance analytics and charts
+                </p>
               </div>
-            )}
-          </>
-        )}
-      </main>
+            </Card>
+          )}
+        </>
+      )}
     </div>
   )
 }

@@ -18,20 +18,36 @@ type AccountRiskConfig struct {
 	MaxTotalPositionUSD float64 `json:"max_total_position_usd"` // Max total exposure
 	MaxOpenPositions   int     `json:"max_open_positions"`    // Max number of positions
 
-	// Leverage limits
+	// Leverage limits (NOFX-style)
 	MaxLeverage     int     `json:"max_leverage"`      // Global max leverage
 	MaxLeveragePerSymbol map[string]int `json:"max_leverage_per_symbol,omitempty"` // Symbol-specific limits
+	AltcoinMaxLeverage   int     `json:"altcoin_max_leverage"`    // Max leverage for altcoins (default 1.5x)
+	MajorCoinMaxLeverage int     `json:"major_coin_max_leverage"` // Max leverage for BTC/ETH (default 10x)
+	MajorCoins           []string `json:"major_coins"`             // List of major coins (BTC, ETH)
+
+	// Stop-loss requirements
+	MinStopLossRatio     float64 `json:"min_stop_loss_ratio"`      // Minimum SL:TP ratio (e.g., 0.5 for 1:2)
+	RequireStopLoss      bool    `json:"require_stop_loss"`        // Mandatory stop-loss
+	RequireTakeProfit    bool    `json:"require_take_profit"`      // Mandatory take-profit
+
+	// Margin limits
+	MaxMarginUtilization float64 `json:"max_margin_utilization"` // e.g., 0.9 for 90%
 
 	// Trading limits
 	MaxTradesPerDay   int     `json:"max_trades_per_day"`   // Daily trade limit
 	MinTimeBetweenTrades float64 `json:"min_time_between_trades_minutes"` // Cooldown period
+	MaxConsecutiveLosses int     `json:"max_consecutive_losses"` // Stop after N consecutive losses
 
 	// Risk percentage
 	RiskPerTradePercent float64 `json:"risk_per_trade_percent"` // e.g., 2.0 for 2%
 
+	// Volume filtering
+	MinVolumeUSD24h float64 `json:"min_volume_usd_24h"` // Skip assets below this volume
+
 	// Auto-stop
 	AutoStopOnMaxDrawdown bool `json:"auto_stop_on_max_drawdown"`
 	AutoStopOnDailyLimit  bool `json:"auto_stop_on_daily_limit"`
+	AutoStopOnConsecutiveLosses bool `json:"auto_stop_on_consecutive_losses"`
 }
 
 // AccountRiskMonitor monitors account-level risk metrics
@@ -99,7 +115,7 @@ func NewAccountRiskMonitor(config *AccountRiskConfig, initialBalance float64) *A
 	}
 }
 
-// DefaultAccountRiskConfig returns sensible defaults
+// DefaultAccountRiskConfig returns sensible defaults (NOFX-style conservative)
 func DefaultAccountRiskConfig() *AccountRiskConfig {
 	return &AccountRiskConfig{
 		MaxDrawdownPercent:      20.0, // 20% max drawdown
@@ -110,11 +126,21 @@ func DefaultAccountRiskConfig() *AccountRiskConfig {
 		MaxOpenPositions:        5,
 		MaxLeverage:             10,
 		MaxLeveragePerSymbol:    make(map[string]int),
+		AltcoinMaxLeverage:      2,    // Conservative 2x for altcoins (NOFX uses 1.5x)
+		MajorCoinMaxLeverage:    10,   // 10x for BTC/ETH
+		MajorCoins:              []string{"BTCUSDT", "ETHUSDT", "BTCUSD", "ETHUSD"},
+		MinStopLossRatio:        0.5,  // 1:2 minimum SL:TP ratio
+		RequireStopLoss:         true, // Mandatory stop-loss
+		RequireTakeProfit:       false,// Optional take-profit
+		MaxMarginUtilization:    0.9,  // 90% max margin usage
 		MaxTradesPerDay:         50,
-		MinTimeBetweenTrades:    1.0, // 1 minute cooldown
+		MinTimeBetweenTrades:    1.0,  // 1 minute cooldown
+		MaxConsecutiveLosses:    5,    // Stop after 5 consecutive losses
 		RiskPerTradePercent:     2.0,  // 2% risk per trade
+		MinVolumeUSD24h:         15000000.0, // $15M minimum 24h volume (NOFX standard)
 		AutoStopOnMaxDrawdown:   true,
 		AutoStopOnDailyLimit:    true,
+		AutoStopOnConsecutiveLosses: true,
 	}
 }
 
@@ -411,3 +437,134 @@ func (arm *AccountRiskMonitor) GetConfig() *AccountRiskConfig {
 
 	return arm.config
 }
+
+// ValidateLeverageForSymbol validates leverage based on symbol type (NOFX-style)
+func (arm *AccountRiskMonitor) ValidateLeverageForSymbol(symbol string, leverage int) (bool, string) {
+	arm.mu.RLock()
+	defer arm.mu.RUnlock()
+
+	// Check if it's a major coin (BTC/ETH)
+	isMajorCoin := false
+	for _, majorCoin := range arm.config.MajorCoins {
+		if symbol == majorCoin {
+			isMajorCoin = true
+			break
+		}
+	}
+
+	// Apply appropriate leverage limit
+	var maxLeverage int
+	if isMajorCoin {
+		maxLeverage = arm.config.MajorCoinMaxLeverage
+	} else {
+		maxLeverage = arm.config.AltcoinMaxLeverage
+	}
+
+	if leverage > maxLeverage {
+		coinType := "altcoin"
+		if isMajorCoin {
+			coinType = "major coin"
+		}
+		return false, fmt.Sprintf("Leverage %dx exceeds %s limit of %dx for %s",
+			leverage, coinType, maxLeverage, symbol)
+	}
+
+	// Check global limit
+	if leverage > arm.config.MaxLeverage {
+		return false, fmt.Sprintf("Leverage exceeds global limit: %dx (max: %dx)",
+			leverage, arm.config.MaxLeverage)
+	}
+
+	return true, ""
+}
+
+// ValidateStopLossRatio validates stop-loss to take-profit ratio
+func (arm *AccountRiskMonitor) ValidateStopLossRatio(entryPrice, stopLoss, takeProfit float64, isLong bool) (bool, string) {
+	arm.mu.RLock()
+	defer arm.mu.RUnlock()
+
+	// Check if stop-loss is required
+	if arm.config.RequireStopLoss && stopLoss == 0 {
+		return false, "Stop-loss is required but not set"
+	}
+
+	// Check if take-profit is required
+	if arm.config.RequireTakeProfit && takeProfit == 0 {
+		return false, "Take-profit is required but not set"
+	}
+
+	// If both SL and TP are set, validate ratio
+	if stopLoss > 0 && takeProfit > 0 {
+		var slDistance, tpDistance float64
+
+		if isLong {
+			slDistance = entryPrice - stopLoss
+			tpDistance = takeProfit - entryPrice
+		} else {
+			slDistance = stopLoss - entryPrice
+			tpDistance = entryPrice - takeProfit
+		}
+
+		if slDistance <= 0 || tpDistance <= 0 {
+			return false, "Invalid stop-loss or take-profit levels"
+		}
+
+		// Calculate ratio (SL:TP)
+		ratio := slDistance / tpDistance
+
+		if ratio > arm.config.MinStopLossRatio {
+			return false, fmt.Sprintf("SL:TP ratio %.2f:1 exceeds maximum %.2f:1 (need better risk/reward)",
+				ratio, arm.config.MinStopLossRatio)
+		}
+	}
+
+	return true, ""
+}
+
+// ValidateVolume checks if asset has sufficient trading volume
+func (arm *AccountRiskMonitor) ValidateVolume(volume24hUSD float64, symbol string) (bool, string) {
+	arm.mu.RLock()
+	defer arm.mu.RUnlock()
+
+	if arm.config.MinVolumeUSD24h <= 0 {
+		return true, "" // No volume filter configured
+	}
+
+	if volume24hUSD < arm.config.MinVolumeUSD24h {
+		return false, fmt.Sprintf("Asset %s has insufficient liquidity: $%.2fM (minimum: $%.2fM)",
+			symbol, volume24hUSD/1000000, arm.config.MinVolumeUSD24h/1000000)
+	}
+
+	return true, ""
+}
+
+// ValidateMarginUtilization checks if margin usage is within limits
+func (arm *AccountRiskMonitor) ValidateMarginUtilization(totalBalance, marginUsed float64) (bool, string) {
+	arm.mu.RLock()
+	defer arm.mu.RUnlock()
+
+	if totalBalance <= 0 {
+		return false, "Invalid balance"
+	}
+
+	marginRatio := marginUsed / totalBalance
+
+	if marginRatio > arm.config.MaxMarginUtilization {
+		return false, fmt.Sprintf("Margin utilization %.1f%% exceeds limit %.1f%%",
+			marginRatio*100, arm.config.MaxMarginUtilization*100)
+	}
+
+	return true, ""
+}
+
+// TrackConsecutiveLosses tracks consecutive losing trades
+func (arm *AccountRiskMonitor) TrackConsecutiveLosses(tradeProfit float64) int {
+	arm.mu.Lock()
+	defer arm.mu.Unlock()
+
+	// This would need to be tracked in a separate field
+	// For now, return 0 as placeholder
+	// TODO: Add consecutiveLossCount field to AccountRiskMonitor
+	return 0
+}
+

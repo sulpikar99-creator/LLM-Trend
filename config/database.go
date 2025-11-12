@@ -91,6 +91,8 @@ func initSchema(db *sql.DB) error {
 		user_id TEXT NOT NULL,
 		name TEXT NOT NULL,
 		exchange_type TEXT NOT NULL,
+		symbol TEXT NOT NULL,
+		interval TEXT NOT NULL,
 		exchange_config TEXT,
 		ai_config TEXT,
 		strategy_prompt TEXT,

@@ -1,99 +1,166 @@
+import type {
+  ApiResponse,
+  LoginRequest,
+  RegisterRequest,
+  AuthResponse,
+  Trader,
+  CreateTraderRequest,
+  Config,
+  DecisionResponse,
+} from '@/types'
+
 const API_BASE_URL = '/api'
 
-interface ApiResponse<T> {
-  success: boolean
-  data: T
-  error?: string
-}
+class ApiClient {
+  private getHeaders(): HeadersInit {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    }
 
-async function fetchApi<T>(
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<ApiResponse<T>> {
-  const token = localStorage.getItem('token')
+    const token = localStorage.getItem('auth-storage')
+    if (token) {
+      try {
+        const parsed = JSON.parse(token)
+        if (parsed.state?.token) {
+          headers['Authorization'] = `Bearer ${parsed.state.token}`
+        }
+      } catch (e) {
+        console.error('Failed to parse auth token:', e)
+      }
+    }
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string>),
+    return headers
   }
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<ApiResponse<T>> {
+    try {
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        ...options,
+        headers: {
+          ...this.getHeaders(),
+          ...options.headers,
+        },
+      })
+
+      if (!response.ok) {
+        let errorMessage = 'Request failed'
+        try {
+          const errorData = await response.json()
+          errorMessage = errorData.error || errorData.message || errorMessage
+        } catch {
+          const errorText = await response.text()
+          errorMessage = errorText || `HTTP ${response.status}: ${response.statusText}`
+        }
+        throw new Error(errorMessage)
+      }
+
+      const data = await response.json()
+      return data
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error
+      }
+      throw new Error('An unknown error occurred')
+    }
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  })
-
-  const data = await response.json()
-
-  if (!response.ok) {
-    throw new Error(data.error || 'Request failed')
-  }
-
-  return data
-}
-
-export const api = {
   // Auth endpoints
-  login: (username: string, password: string) =>
-    fetchApi<{ token: string; user_id: string; username: string; role: string }>(
-      '/auth/login',
-      {
-        method: 'POST',
-        body: JSON.stringify({ username, password }),
-      }
-    ),
+  async login(data: LoginRequest): Promise<AuthResponse> {
+    return this.request<AuthResponse['data']>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
 
-  register: (username: string, email: string, password: string, betaCode?: string) =>
-    fetchApi<{ token: string; user_id: string; username: string; role: string }>(
-      '/auth/register',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          username,
-          email,
-          password,
-          ...(betaCode && { beta_code: betaCode })
-        }),
-      }
-    ),
-
-  // User endpoints
-  getProfile: () => fetchApi<any>('/user/profile'),
+  async register(data: RegisterRequest): Promise<AuthResponse> {
+    return this.request<AuthResponse['data']>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
 
   // Trader endpoints
-  listTraders: () => fetchApi<any>('/traders'),
-  getTrader: (id: string) => fetchApi<any>(`/traders/${id}`),
-  createTrader: (data: any) => fetchApi<any>('/traders', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  }),
-  updateTrader: (id: string, data: any) => fetchApi<any>(`/traders/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(data),
-  }),
-  deleteTrader: (id: string) => fetchApi<any>(`/traders/${id}`, {
-    method: 'DELETE',
-  }),
-  startTrader: (id: string) => fetchApi<any>(`/traders/${id}/start`, {
-    method: 'POST',
-  }),
-  stopTrader: (id: string) => fetchApi<any>(`/traders/${id}/stop`, {
-    method: 'POST',
-  }),
+  async listTraders(): Promise<ApiResponse<Trader[]>> {
+    return this.request<Trader[]>('/traders')
+  }
+
+  async getTrader(id: string): Promise<ApiResponse<Trader>> {
+    return this.request<Trader>(`/traders/${id}`)
+  }
+
+  async createTrader(data: CreateTraderRequest): Promise<ApiResponse<Trader>> {
+    return this.request<Trader>('/traders', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
+  async startTrader(id: string): Promise<ApiResponse<{ message: string }>> {
+    return this.request<{ message: string }>(`/traders/${id}/start`, {
+      method: 'POST',
+    })
+  }
+
+  async stopTrader(id: string): Promise<ApiResponse<{ message: string }>> {
+    return this.request<{ message: string }>(`/traders/${id}/stop`, {
+      method: 'POST',
+    })
+  }
+
+  async deleteTrader(id: string): Promise<ApiResponse<{ message: string }>> {
+    return this.request<{ message: string }>(`/traders/${id}`, {
+      method: 'DELETE',
+    })
+  }
 
   // Analytics endpoints
-  getDrawdown: () => fetchApi<any>('/analytics/drawdown'),
-  getMonteCarlo: () => fetchApi<any>('/analytics/montecarlo'),
-  getCorrelation: () => fetchApi<any>('/analytics/correlation'),
-  getPerformance: () => fetchApi<any>('/analytics/performance'),
+  async getPerformance(traderId?: string): Promise<ApiResponse<any>> {
+    const query = traderId ? `?trader_id=${traderId}` : ''
+    return this.request<any>(`/analytics/performance${query}`)
+  }
+
+  async getDrawdown(traderId?: string): Promise<ApiResponse<any>> {
+    const query = traderId ? `?trader_id=${traderId}` : ''
+    return this.request<any>(`/analytics/drawdown${query}`)
+  }
+
+  async getMonteCarlo(traderId?: string): Promise<ApiResponse<any>> {
+    const query = traderId ? `?trader_id=${traderId}` : ''
+    return this.request<any>(`/analytics/montecarlo${query}`)
+  }
+
+  async getCorrelation(): Promise<ApiResponse<any>> {
+    return this.request<any>('/analytics/correlation')
+  }
 
   // Config endpoints
-  getConfig: () => fetchApi<any>('/config'),
-  updateConfig: (data: any) => fetchApi<any>('/config', {
-    method: 'PUT',
-    body: JSON.stringify(data),
-  }),
+  async getConfig(): Promise<ApiResponse<Config>> {
+    return this.request<Config>('/config')
+  }
+
+  async updateConfig(data: Partial<Config>): Promise<ApiResponse<Config>> {
+    return this.request<Config>('/config', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  }
+
+  // Decision endpoints
+  async getDecisions(traderId: string, limit: number = 20): Promise<ApiResponse<DecisionResponse>> {
+    return this.request<DecisionResponse>(`/decisions/${traderId}?limit=${limit}`)
+  }
+
+  async getDecisionByCycle(traderId: string, cycle: number): Promise<ApiResponse<any>> {
+    return this.request<any>(`/decisions/${traderId}/${cycle}`)
+  }
+
+  // Health check
+  async health(): Promise<ApiResponse<{ status: string }>> {
+    return this.request<{ status: string }>('/health')
+  }
 }
+
+export const api = new ApiClient()

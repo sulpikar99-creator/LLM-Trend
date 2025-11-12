@@ -117,11 +117,22 @@ func (s *Server) handleUpdateRiskConfig(c *gin.Context) {
 		}
 	}
 
+	// Build response with nil checks
 	response := gin.H{
-		"trader_id":     traderID,
-		"account_risk":  trader.AccountRisk.GetConfig(),
-		"position_risk": trader.PositionRisk.GetConfig(),
-		"message":       "Risk configuration updated successfully",
+		"trader_id": traderID,
+		"message":   "Risk configuration updated successfully",
+	}
+
+	if trader.AccountRisk != nil {
+		response["account_risk"] = trader.AccountRisk.GetConfig()
+	} else {
+		response["account_risk"] = nil
+	}
+
+	if trader.PositionRisk != nil {
+		response["position_risk"] = trader.PositionRisk.GetConfig()
+	} else {
+		response["position_risk"] = nil
 	}
 
 	successResponse(c, response)

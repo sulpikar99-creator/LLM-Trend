@@ -236,6 +236,59 @@ func (e *DecisionEngine) buildInputPrompt(ctx *DecisionContext, strategyPrompt s
 		sb.WriteString(fmt.Sprintf("Total P&L: %.2f USDT\n", ctx.TotalPnL))
 	}
 
+	// Self-Evolution: Analyze recent trading performance
+	if len(ctx.RecentDecisions) > 0 {
+		sb.WriteString("\n## Self-Evolution Analysis (Last 20 Cycles)\n")
+		sb.WriteString("Learn from your recent trading history to improve decision-making:\n\n")
+
+		analysis := e.analyzeRecentPerformance(ctx.RecentDecisions)
+
+		if analysis.BestTrade != nil {
+			sb.WriteString(fmt.Sprintf("### Best Trade\n"))
+			sb.WriteString(fmt.Sprintf("- Action: %s on %s\n", analysis.BestTrade.Action, analysis.BestTrade.Symbol))
+			sb.WriteString(fmt.Sprintf("- P&L: %.2f USDT (%.2f%%)\n", analysis.BestTrade.PnL, analysis.BestTrade.PnLPercent))
+			sb.WriteString(fmt.Sprintf("- Reasoning: %s\n\n", analysis.BestTrade.Reasoning))
+		}
+
+		if analysis.WorstTrade != nil {
+			sb.WriteString(fmt.Sprintf("### Worst Trade\n"))
+			sb.WriteString(fmt.Sprintf("- Action: %s on %s\n", analysis.WorstTrade.Action, analysis.WorstTrade.Symbol))
+			sb.WriteString(fmt.Sprintf("- P&L: %.2f USDT (%.2f%%)\n", analysis.WorstTrade.PnL, analysis.WorstTrade.PnLPercent))
+			sb.WriteString(fmt.Sprintf("- Reasoning: %s\n", analysis.WorstTrade.Reasoning))
+			sb.WriteString(fmt.Sprintf("- **Learn from this**: Avoid similar patterns\n\n"))
+		}
+
+		if analysis.ConsecutiveLosses > 0 {
+			sb.WriteString(fmt.Sprintf("### Risk Alert\n"))
+			sb.WriteString(fmt.Sprintf("- Consecutive Losses: %d trades\n", analysis.ConsecutiveLosses))
+			sb.WriteString(fmt.Sprintf("- **Recommendation**: Consider reducing position sizes or waiting for clearer signals\n\n"))
+		}
+
+		if len(analysis.SuccessfulPatterns) > 0 {
+			sb.WriteString(fmt.Sprintf("### Successful Patterns (Repeat These)\n"))
+			for _, pattern := range analysis.SuccessfulPatterns {
+				sb.WriteString(fmt.Sprintf("- %s: %d wins, avg %.2f%% profit\n", pattern.Description, pattern.WinCount, pattern.AvgProfitPercent))
+			}
+			sb.WriteString("\n")
+		}
+
+		if len(analysis.FailedPatterns) > 0 {
+			sb.WriteString(fmt.Sprintf("### Failed Patterns (Avoid These)\n"))
+			for _, pattern := range analysis.FailedPatterns {
+				sb.WriteString(fmt.Sprintf("- %s: %d losses, avg %.2f%% loss\n", pattern.Description, pattern.LossCount, pattern.AvgLossPercent))
+			}
+			sb.WriteString("\n")
+		}
+
+		sb.WriteString(fmt.Sprintf("### Key Insights\n"))
+		sb.WriteString(fmt.Sprintf("- Recent Win Rate: %.1f%% (%d/%d trades)\n", analysis.RecentWinRate, analysis.RecentWins, len(ctx.RecentDecisions)))
+		sb.WriteString(fmt.Sprintf("- Average Hold Time: %s\n", analysis.AvgHoldTime))
+		sb.WriteString(fmt.Sprintf("- Best Performing Symbol: %s\n", analysis.BestSymbol))
+		sb.WriteString(fmt.Sprintf("- Worst Performing Symbol: %s\n\n", analysis.WorstSymbol))
+
+		sb.WriteString("**Use this analysis to make smarter decisions. Learn from wins, avoid repeating losses.**\n")
+	}
+
 	sb.WriteString("\n## Your Decision\n")
 	sb.WriteString("Based on the above data, provide your trading decision in the following JSON format:\n")
 	sb.WriteString("```json\n")

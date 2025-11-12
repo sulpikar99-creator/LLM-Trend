@@ -1,539 +1,357 @@
-import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../contexts/AuthContext'
-import { api } from '../lib/api'
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import { Save, Bot, Shield, FileText } from 'lucide-react'
+import toast from 'react-hot-toast'
+import { api } from '@/lib/api'
+import { Card } from '@/components/ui/Card'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
+import type { Config } from '@/types'
 
-interface AIModel {
-  id: string
-  name: string
-  provider: string
-  base_url: string
-  max_tokens: number
-  temperature: number
-  api_key_encrypted?: string
-}
+const aiConfigSchema = z.object({
+  provider: z.string(),
+  model_id: z.string().min(1, 'Model ID is required'),
+  api_key: z.string().min(1, 'API Key is required'),
+  base_url: z.string().url('Invalid URL'),
+  max_tokens: z.number().min(100).max(100000),
+  temperature: z.number().min(0).max(2),
+})
 
-interface RiskLimits {
-  max_drawdown_percent: number
-  max_position_size_usd: number
-  max_leverage: number
-  daily_loss_limit_usd: number
-}
+const riskLimitsSchema = z.object({
+  max_drawdown_percent: z.number().min(1).max(100),
+  max_position_size_usd: z.number().min(1),
+  max_leverage: z.number().min(1).max(125),
+  daily_loss_limit_usd: z.number().min(1),
+})
 
-interface Config {
-  ai_models: AIModel[]
-  risk_limits: RiskLimits
-  default_strategy_prompt: string
-}
+type AIConfigFormData = z.infer<typeof aiConfigSchema>
+type RiskLimitsFormData = z.infer<typeof riskLimitsSchema>
 
 export default function SettingsPage() {
-  const { user, logout } = useAuth()
-  const navigate = useNavigate()
-  const [config, setConfig] = useState<Config | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
-  const [submitting, setSubmitting] = useState(false)
+  const [activeTab, setActiveTab] = useState<'ai' | 'risk' | 'strategy'>('ai')
+  const queryClient = useQueryClient()
 
-  // Risk limits form state
-  const [maxDrawdown, setMaxDrawdown] = useState(20)
-  const [maxPositionSize, setMaxPositionSize] = useState(10000)
-  const [maxLeverage, setMaxLeverage] = useState(10)
-  const [dailyLossLimit, setDailyLossLimit] = useState(1000)
+  const { data: configData, isLoading } = useQuery({
+    queryKey: ['config'],
+    queryFn: () => api.getConfig(),
+  })
 
-  // AI model form state
-  const [aiProvider, setAiProvider] = useState('deepseek')
-  const [aiModel, setAiModel] = useState('deepseek-chat')
-  const [aiApiKey, setAiApiKey] = useState('')
-  const [aiBaseUrl, setAiBaseUrl] = useState('https://api.deepseek.com')
-  const [aiMaxTokens, setAiMaxTokens] = useState(4000)
-  const [aiTemperature, setAiTemperature] = useState(0.7)
+  const updateMutation = useMutation({
+    mutationFn: (data: Partial<Config>) => api.updateConfig(data),
+    onSuccess: () => {
+      toast.success('Settings saved successfully')
+      queryClient.invalidateQueries({ queryKey: ['config'] })
+    },
+    onError: (error: any) => {
+      toast.error(error.message || 'Failed to save settings')
+    },
+  })
 
-  // Strategy prompt
-  const [strategyPrompt, setStrategyPrompt] = useState('')
+  const config = configData?.data as Config
 
-  useEffect(() => {
-    loadConfig()
-  }, [])
+  const {
+    register: registerAI,
+    handleSubmit: handleAISubmit,
+    formState: { errors: aiErrors },
+  } = useForm<AIConfigFormData>({
+    resolver: zodResolver(aiConfigSchema),
+    values: config?.ai_models?.[0]
+      ? {
+          provider: config.ai_models[0].provider,
+          model_id: config.ai_models[0].model_id,
+          api_key: config.ai_models[0].api_key || '',
+          base_url: config.ai_models[0].base_url,
+          max_tokens: config.ai_models[0].max_tokens,
+          temperature: config.ai_models[0].temperature,
+        }
+      : undefined,
+  })
 
-  const loadConfig = async () => {
-    try {
-      setLoading(true)
-      setError('')
-      const response = await api.getConfig()
-      const configData = response.data as Config
+  const {
+    register: registerRisk,
+    handleSubmit: handleRiskSubmit,
+    formState: { errors: riskErrors },
+  } = useForm<RiskLimitsFormData>({
+    resolver: zodResolver(riskLimitsSchema),
+    values: config?.risk_limits
+      ? {
+          max_drawdown_percent: config.risk_limits.max_drawdown_percent,
+          max_position_size_usd: config.risk_limits.max_position_size_usd,
+          max_leverage: config.risk_limits.max_leverage,
+          daily_loss_limit_usd: config.risk_limits.daily_loss_limit_usd,
+        }
+      : undefined,
+  })
 
-      setConfig(configData)
+  const [strategyPrompt, setStrategyPrompt] = useState(config?.default_strategy_prompt || '')
 
-      // Set risk limits
-      if (configData.risk_limits) {
-        setMaxDrawdown(configData.risk_limits.max_drawdown_percent)
-        setMaxPositionSize(configData.risk_limits.max_position_size_usd)
-        setMaxLeverage(configData.risk_limits.max_leverage)
-        setDailyLossLimit(configData.risk_limits.daily_loss_limit_usd)
-      }
-
-      // Set AI model config
-      if (configData.ai_models && configData.ai_models.length > 0) {
-        const model = configData.ai_models[0]
-        setAiProvider(model.provider)
-        setAiModel(model.id)
-        setAiApiKey(model.api_key_encrypted || '')
-        setAiBaseUrl(model.base_url)
-        setAiMaxTokens(model.max_tokens)
-        setAiTemperature(model.temperature)
-      }
-
-      // Set strategy prompt
-      if (configData.default_strategy_prompt) {
-        setStrategyPrompt(configData.default_strategy_prompt)
-      }
-    } catch (err: any) {
-      setError(err.message || 'Failed to load configuration')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleSaveRiskLimits = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSubmitting(true)
-    setError('')
-    setSuccess('')
-
-    try {
-      const updatedConfig = {
-        ...config,
-        risk_limits: {
-          max_drawdown_percent: maxDrawdown,
-          max_position_size_usd: maxPositionSize,
-          max_leverage: maxLeverage,
-          daily_loss_limit_usd: dailyLossLimit,
+  const onAISubmit = (data: AIConfigFormData) => {
+    updateMutation.mutate({
+      ai_models: [
+        {
+          provider: data.provider,
+          model_id: data.model_id,
+          api_key: data.api_key,
+          base_url: data.base_url,
+          max_tokens: data.max_tokens,
+          temperature: data.temperature,
         },
-      }
-
-      await api.updateConfig(updatedConfig)
-      setSuccess('Risk limits updated successfully')
-      setTimeout(() => setSuccess(''), 3000)
-      loadConfig()
-    } catch (err: any) {
-      setError(err.message || 'Failed to update risk limits')
-    } finally {
-      setSubmitting(false)
-    }
+      ],
+    })
   }
 
-  const handleSaveAIConfig = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSubmitting(true)
-    setError('')
-    setSuccess('')
-
-    try {
-      const updatedConfig = {
-        ...config,
-        ai_models: [
-          {
-            id: aiModel,
-            name: aiModel.replace('-', ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
-            provider: aiProvider,
-            api_key_encrypted: aiApiKey,
-            base_url: aiBaseUrl,
-            max_tokens: aiMaxTokens,
-            temperature: aiTemperature,
-          },
-        ],
-      }
-
-      await api.updateConfig(updatedConfig)
-      setSuccess('AI configuration updated successfully')
-      setTimeout(() => setSuccess(''), 3000)
-      loadConfig()
-    } catch (err: any) {
-      setError(err.message || 'Failed to update AI configuration')
-    } finally {
-      setSubmitting(false)
-    }
+  const onRiskSubmit = (data: RiskLimitsFormData) => {
+    updateMutation.mutate({
+      risk_limits: data,
+    })
   }
 
-  const handleSaveStrategyPrompt = async (e: React.FormEvent) => {
+  const onStrategySubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    setSubmitting(true)
-    setError('')
-    setSuccess('')
+    updateMutation.mutate({
+      default_strategy_prompt: strategyPrompt,
+    })
+  }
 
-    try {
-      const updatedConfig = {
-        ...config,
-        default_strategy_prompt: strategyPrompt,
-      }
-
-      await api.updateConfig(updatedConfig)
-      setSuccess('Strategy prompt updated successfully')
-      setTimeout(() => setSuccess(''), 3000)
-      loadConfig()
-    } catch (err: any) {
-      setError(err.message || 'Failed to update strategy prompt')
-    } finally {
-      setSubmitting(false)
-    }
+  if (isLoading) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-gray-400">Loading settings...</p>
+      </div>
+    )
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Navigation */}
-      <nav className="bg-card border-b border-border">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16 items-center">
-            <div className="flex items-center space-x-8">
-              <h1 className="text-xl font-bold text-primary">LLM Trend</h1>
-              <div className="flex space-x-4">
-                <button
-                  onClick={() => navigate('/')}
-                  className="text-gray-400 hover:text-white"
-                >
-                  Dashboard
-                </button>
-                <button
-                  onClick={() => navigate('/traders')}
-                  className="text-gray-400 hover:text-white"
-                >
-                  Traders
-                </button>
-                <button
-                  onClick={() => navigate('/analytics')}
-                  className="text-gray-400 hover:text-white"
-                >
-                  Analytics
-                </button>
-                <button
-                  onClick={() => navigate('/settings')}
-                  className="text-primary font-semibold"
-                >
-                  Settings
-                </button>
-              </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              <span className="text-gray-400">Welcome, {user?.username}</span>
-              <button
-                onClick={logout}
-                className="px-4 py-2 bg-danger hover:bg-danger/90 text-white rounded"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-      </nav>
+    <div className="space-y-8">
+      {/* Header */}
+      <div>
+        <h1 className="text-4xl font-bold mb-2">Settings</h1>
+        <p className="text-gray-400">Configure your AI trading platform</p>
+      </div>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold">Settings</h2>
-          <p className="text-gray-400 mt-2">Configure your trading platform</p>
-        </div>
+      {/* Tabs */}
+      <div className="flex space-x-2 border-b border-border">
+        {[
+          { id: 'ai', label: 'AI Configuration', icon: Bot },
+          { id: 'risk', label: 'Risk Limits', icon: Shield },
+          { id: 'strategy', label: 'Strategy Prompt', icon: FileText },
+        ].map((tab) => {
+          const Icon = tab.icon
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`flex items-center space-x-2 px-6 py-3 font-medium border-b-2 transition-colors ${
+                activeTab === tab.id
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-gray-400 hover:text-white'
+              }`}
+            >
+              <Icon className="w-5 h-5" />
+              <span>{tab.label}</span>
+            </button>
+          )
+        })}
+      </div>
 
-        {error && (
-          <div className="mb-6 bg-danger/10 border border-danger text-danger px-4 py-3 rounded">
-            {error}
-          </div>
-        )}
-
-        {success && (
-          <div className="mb-6 bg-green-500/10 border border-green-500 text-green-500 px-4 py-3 rounded">
-            {success}
-          </div>
-        )}
-
-        {loading ? (
-          <div className="text-center py-12">
-            <p className="text-gray-400">Loading configuration...</p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {/* Risk Limits Section */}
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h3 className="text-xl font-bold mb-4">Risk Limits</h3>
-              <p className="text-gray-400 mb-6">
-                Configure risk management parameters for all traders
+      {/* AI Configuration Tab */}
+      {activeTab === 'ai' && (
+        <Card>
+          <form onSubmit={handleAISubmit(onAISubmit)} className="space-y-6">
+            <div>
+              <h3 className="text-xl font-bold mb-4">AI Model Configuration</h3>
+              <p className="text-gray-400 text-sm mb-6">
+                Configure the AI model used for trading decisions. API keys are encrypted and stored securely.
               </p>
-
-              <form onSubmit={handleSaveRiskLimits} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Max Drawdown (%)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="100"
-                      required
-                      value={maxDrawdown}
-                      onChange={(e) => setMaxDrawdown(parseFloat(e.target.value))}
-                      className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Maximum allowed portfolio drawdown
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Max Position Size (USD)
-                    </label>
-                    <input
-                      type="number"
-                      step="100"
-                      min="0"
-                      required
-                      value={maxPositionSize}
-                      onChange={(e) => setMaxPositionSize(parseFloat(e.target.value))}
-                      className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Maximum position size per trade
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Max Leverage
-                    </label>
-                    <input
-                      type="number"
-                      step="1"
-                      min="1"
-                      max="125"
-                      required
-                      value={maxLeverage}
-                      onChange={(e) => setMaxLeverage(parseFloat(e.target.value))}
-                      className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Maximum allowed leverage
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Daily Loss Limit (USD)
-                    </label>
-                    <input
-                      type="number"
-                      step="100"
-                      min="0"
-                      required
-                      value={dailyLossLimit}
-                      onChange={(e) => setDailyLossLimit(parseFloat(e.target.value))}
-                      className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Maximum daily loss before stopping
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded font-medium disabled:opacity-50"
-                  >
-                    {submitting ? 'Saving...' : 'Save Risk Limits'}
-                  </button>
-                </div>
-              </form>
             </div>
 
-            {/* AI Configuration Section */}
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h3 className="text-xl font-bold mb-4">AI Configuration</h3>
-              <p className="text-gray-400 mb-6">
-                Configure the AI model used for trading decisions
+            <div className="grid grid-cols-2 gap-4">
+              <Select
+                {...registerAI('provider')}
+                label="AI Provider"
+                options={[
+                  { value: 'deepseek', label: 'DeepSeek' },
+                  { value: 'openai', label: 'OpenAI' },
+                  { value: 'claude', label: 'Anthropic Claude' },
+                  { value: 'qwen', label: 'Qwen' },
+                ]}
+                error={aiErrors.provider?.message}
+              />
+
+              <Input
+                {...registerAI('model_id')}
+                label="Model ID"
+                placeholder="e.g., deepseek-chat, gpt-4"
+                error={aiErrors.model_id?.message}
+              />
+            </div>
+
+            <Input
+              {...registerAI('api_key')}
+              type="password"
+              label="API Key"
+              placeholder="sk-..."
+              error={aiErrors.api_key?.message}
+            />
+
+            <Input
+              {...registerAI('base_url')}
+              label="Base URL"
+              placeholder="https://api.deepseek.com"
+              error={aiErrors.base_url?.message}
+            />
+
+            <div className="grid grid-cols-2 gap-4">
+              <Input
+                {...registerAI('max_tokens', { valueAsNumber: true })}
+                type="number"
+                label="Max Tokens"
+                placeholder="4000"
+                error={aiErrors.max_tokens?.message}
+              />
+
+              <Input
+                {...registerAI('temperature', { valueAsNumber: true })}
+                type="number"
+                step="0.1"
+                label="Temperature"
+                placeholder="0.7"
+                error={aiErrors.temperature?.message}
+              />
+            </div>
+
+            <div className="bg-primary/10 border border-primary/50 rounded-lg p-4 text-sm">
+              <strong>💡 Tip:</strong> Lower temperature (0.1-0.3) for more conservative trading, higher (0.7-1.0) for more creative strategies.
+            </div>
+
+            <Button
+              type="submit"
+              variant="primary"
+              isLoading={updateMutation.isPending}
+              className="w-full"
+            >
+              <Save className="w-4 h-4 mr-2" />
+              Save AI Configuration
+            </Button>
+          </form>
+        </Card>
+      )}
+
+      {/* Risk Limits Tab */}
+      {activeTab === 'risk' && (
+        <Card>
+          <form onSubmit={handleRiskSubmit(onRiskSubmit)} className="space-y-6">
+            <div>
+              <h3 className="text-xl font-bold mb-4">Risk Management Limits</h3>
+              <p className="text-gray-400 text-sm mb-6">
+                Set maximum risk limits for all traders. These limits apply globally to protect your capital.
               </p>
-
-              {/* Warning if API key is not set */}
-              {!aiApiKey && (
-                <div className="mb-4 bg-red-500/10 border border-red-500 text-red-500 px-4 py-3 rounded">
-                  <strong>⚠️ Required:</strong> AI API Key must be configured before starting traders.
-                  <br />
-                  Get your API key from{' '}
-                  <a
-                    href={aiProvider === 'deepseek' ? 'https://platform.deepseek.com' : 'https://platform.openai.com'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline font-semibold"
-                  >
-                    {aiProvider === 'deepseek' ? 'DeepSeek Platform' : 'OpenAI Platform'}
-                  </a>
-                </div>
-              )}
-
-              <form onSubmit={handleSaveAIConfig} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      AI Provider
-                    </label>
-                    <select
-                      value={aiProvider}
-                      onChange={(e) => setAiProvider(e.target.value)}
-                      className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                    >
-                      <option value="deepseek">DeepSeek</option>
-                      <option value="openai">OpenAI</option>
-                      <option value="anthropic">Anthropic</option>
-                      <option value="custom">Custom</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Model ID
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={aiModel}
-                      onChange={(e) => setAiModel(e.target.value)}
-                      className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                      placeholder="deepseek-chat"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium mb-2">
-                      API Key <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      value={aiApiKey}
-                      onChange={(e) => setAiApiKey(e.target.value)}
-                      className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                      placeholder="sk-..."
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Your {aiProvider} API key. This will be encrypted and stored securely.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Base URL
-                    </label>
-                    <input
-                      type="url"
-                      required
-                      value={aiBaseUrl}
-                      onChange={(e) => setAiBaseUrl(e.target.value)}
-                      className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                      placeholder="https://api.deepseek.com"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Max Tokens
-                    </label>
-                    <input
-                      type="number"
-                      step="100"
-                      min="100"
-                      required
-                      value={aiMaxTokens}
-                      onChange={(e) => setAiMaxTokens(parseInt(e.target.value))}
-                      className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Temperature
-                    </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="2"
-                      required
-                      value={aiTemperature}
-                      onChange={(e) => setAiTemperature(parseFloat(e.target.value))}
-                      className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Higher values = more creative, lower = more focused
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded font-medium disabled:opacity-50"
-                  >
-                    {submitting ? 'Saving...' : 'Save AI Configuration'}
-                  </button>
-                </div>
-              </form>
             </div>
 
-            {/* Strategy Prompt Section */}
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h3 className="text-xl font-bold mb-4">Strategy Prompt</h3>
-              <p className="text-gray-400 mb-6">
-                Customize the system prompt used by the AI for trading decisions
+            <div className="grid grid-cols-2 gap-4">
+              <Input
+                {...registerRisk('max_drawdown_percent', { valueAsNumber: true })}
+                type="number"
+                step="0.1"
+                label="Max Drawdown (%)"
+                placeholder="20"
+                error={riskErrors.max_drawdown_percent?.message}
+              />
+
+              <Input
+                {...registerRisk('max_position_size_usd', { valueAsNumber: true })}
+                type="number"
+                label="Max Position Size (USD)"
+                placeholder="10000"
+                error={riskErrors.max_position_size_usd?.message}
+              />
+
+              <Input
+                {...registerRisk('max_leverage', { valueAsNumber: true })}
+                type="number"
+                label="Max Leverage"
+                placeholder="10"
+                error={riskErrors.max_leverage?.message}
+              />
+
+              <Input
+                {...registerRisk('daily_loss_limit_usd', { valueAsNumber: true })}
+                type="number"
+                label="Daily Loss Limit (USD)"
+                placeholder="1000"
+                error={riskErrors.daily_loss_limit_usd?.message}
+              />
+            </div>
+
+            <div className="bg-danger/10 border border-danger/50 rounded-lg p-4 text-sm text-danger">
+              <strong>⚠️ Warning:</strong> Traders will be automatically stopped if any of these limits are breached.
+            </div>
+
+            <Button
+              type="submit"
+              variant="primary"
+              isLoading={updateMutation.isPending}
+              className="w-full"
+            >
+              <Save className="w-4 h-4 mr-2" />
+              Save Risk Limits
+            </Button>
+          </form>
+        </Card>
+      )}
+
+      {/* Strategy Prompt Tab */}
+      {activeTab === 'strategy' && (
+        <Card>
+          <form onSubmit={onStrategySubmit} className="space-y-6">
+            <div>
+              <h3 className="text-xl font-bold mb-4">Default Strategy Prompt</h3>
+              <p className="text-gray-400 text-sm mb-6">
+                This is the default AI trading strategy prompt. You can customize it per-trader when creating a new bot.
               </p>
-
-              <form onSubmit={handleSaveStrategyPrompt} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Default Strategy Prompt
-                  </label>
-                  <textarea
-                    required
-                    value={strategyPrompt}
-                    onChange={(e) => setStrategyPrompt(e.target.value)}
-                    rows={12}
-                    className="w-full px-3 py-2 border border-border rounded bg-background text-white focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                    placeholder="Enter your strategy prompt..."
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    This prompt guides the AI's trading decisions. Be specific about your strategy.
-                  </p>
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded font-medium disabled:opacity-50"
-                  >
-                    {submitting ? 'Saving...' : 'Save Strategy Prompt'}
-                  </button>
-                </div>
-              </form>
             </div>
 
-            {/* Info Section */}
-            <div className="bg-yellow-500/10 border border-yellow-500/50 rounded-lg p-6">
-              <h3 className="text-lg font-bold text-yellow-500 mb-2">
-                Important Notes
-              </h3>
-              <ul className="list-disc list-inside space-y-2 text-yellow-500/90 text-sm">
-                <li>Risk limits apply to all traders on your account</li>
-                <li>AI configuration changes will affect new trading decisions</li>
-                <li>Strategy prompt changes require trader restart to take effect</li>
-                <li>Always test configuration changes with small positions first</li>
+            <div>
+              <label className="label">Strategy Prompt</label>
+              <textarea
+                value={strategyPrompt}
+                onChange={(e) => setStrategyPrompt(e.target.value)}
+                rows={16}
+                className="w-full px-4 py-2.5 bg-background border border-border rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
+                placeholder="Enter your default trading strategy..."
+              />
+              <p className="mt-2 text-xs text-gray-500">
+                This prompt guides the AI's trading decisions. Be specific about entry/exit rules, risk management, and indicators.
+              </p>
+            </div>
+
+            <div className="bg-primary/10 border border-primary/50 rounded-lg p-4 text-sm">
+              <strong>💡 Best Practices:</strong>
+              <ul className="list-disc list-inside mt-2 space-y-1 text-gray-300">
+                <li>Define clear entry and exit rules</li>
+                <li>Specify risk management parameters</li>
+                <li>Mention technical indicators to use</li>
+                <li>Set minimum confidence thresholds</li>
+                <li>Include JSON output format requirements</li>
               </ul>
             </div>
-          </div>
-        )}
-      </main>
+
+            <Button
+              type="submit"
+              variant="primary"
+              isLoading={updateMutation.isPending}
+              className="w-full"
+            >
+              <Save className="w-4 h-4 mr-2" />
+              Save Strategy Prompt
+            </Button>
+          </form>
+        </Card>
+      )}
     </div>
   )
 }
