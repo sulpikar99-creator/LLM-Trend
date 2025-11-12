@@ -38,14 +38,14 @@ export default function AnalyticsPage() {
     queryFn: () => api.getPerformance(selectedTrader === 'all' ? undefined : selectedTrader),
   })
 
-  const traders = (tradersData?.data || []) as Trader[]
+  const traders = Array.isArray(tradersData?.data) ? tradersData.data : []
   const performance = performanceData?.data
 
   // Extract metrics
   const metrics = performance?.overall_metrics || {}
-  const traderStats = performance?.trader_stats || []
-  const pnlHistory = performance?.pnl_history || []
-  const drawdownHistory = performance?.drawdown_history || []
+  const traderStats = Array.isArray(performance?.trader_stats) ? performance.trader_stats : []
+  const pnlHistory = Array.isArray(performance?.pnl_history) ? performance.pnl_history : []
+  const drawdownHistory = Array.isArray(performance?.drawdown_history) ? performance.drawdown_history : []
 
   // Calculate win/loss distribution
   const winLossData = [

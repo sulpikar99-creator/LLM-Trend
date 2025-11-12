@@ -27,7 +27,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (tradersData?.data && performanceData?.data) {
-      const traders = tradersData.data as Trader[]
+      const traders = Array.isArray(tradersData.data) ? tradersData.data : []
       const perf = performanceData.data
 
       setStats({
@@ -125,11 +125,11 @@ export default function Dashboard() {
       )}
 
       {/* Traders List */}
-      {tradersData?.data && tradersData.data.length > 0 && (
+      {tradersData?.data && Array.isArray(tradersData.data) && tradersData.data.length > 0 && (
         <div>
           <h2 className="text-2xl font-bold mb-4">Your Traders</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {(tradersData.data as Trader[]).map((trader) => (
+            {tradersData.data.map((trader) => (
               <Card key={trader.id} hover>
                 <div className="flex justify-between items-start mb-4">
                   <div>

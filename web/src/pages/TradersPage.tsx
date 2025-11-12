@@ -138,7 +138,7 @@ Output JSON format:
     }
   }
 
-  const traders = (tradersData?.data || []) as Trader[]
+  const traders = Array.isArray(tradersData?.data) ? tradersData.data : []
 
   return (
     <div className="space-y-8">
