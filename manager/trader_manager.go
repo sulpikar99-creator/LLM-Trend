@@ -401,6 +401,88 @@ func (tm *TraderManager) StartTrader(id, symbol, interval string) error {
 
 	mt.Status = TraderStatusRunning
 	log.Printf("Trader %s started successfully", id)
+
+	// AUTO-ENABLE TRADING: Start AI decision loop automatically if DecisionEngine is initialized
+	if mt.DecisionEngine != nil && mt.DecisionLogger != nil {
+		mt.mu.Unlock() // Unlock before calling EnableAutoTrading which needs lock
+
+		// Get AI config from database or use default
+		var aiConfig *decision.AIConfig
+
+		// Try to get user's AI config from database
+		if mt.DB != nil {
+			var providerStr, model, apiKey, baseURL sql.NullString
+			var maxTokens sql.NullInt64
+			var temperature sql.NullFloat64
+
+			err := mt.DB.QueryRow(`
+				SELECT ai_provider, ai_model, ai_api_key, ai_base_url, ai_max_tokens, ai_temperature
+				FROM user_config
+				WHERE user_id = ?
+			`, mt.UserID).Scan(&providerStr, &model, &apiKey, &baseURL, &maxTokens, &temperature)
+
+			if err == nil && apiKey.Valid && apiKey.String != "" {
+				aiConfig = &decision.AIConfig{
+					Provider:    decision.AIProvider(providerStr.String),
+					Model:       model.String,
+					APIKey:      apiKey.String,
+					BaseURL:     baseURL.String,
+					MaxTokens:   int(maxTokens.Int64),
+					Temperature: float64(temperature.Float64),
+				}
+				log.Printf("Trader %s: Using user's AI config (%s - %s)", id, aiConfig.Provider, aiConfig.Model)
+			}
+		}
+
+		// If no user config, use default from environment
+		if aiConfig == nil {
+			defaultConfig := decision.GetDefaultAIConfig()
+			if defaultConfig != nil && defaultConfig.APIKey != "" {
+				aiConfig = defaultConfig
+				log.Printf("Trader %s: Using default AI config (%s - %s)", id, aiConfig.Provider, aiConfig.Model)
+			}
+		}
+
+		// Enable auto-trading if we have valid AI config
+		if aiConfig != nil && aiConfig.APIKey != "" {
+			systemPrompt := `You are an expert cryptocurrency trader. Analyze market data carefully and make informed decisions based on technical indicators, market trends, and risk management principles.`
+
+			// Use strategy prompt from database or default
+			strategyPrompt := mt.StrategyPrompt
+			if strategyPrompt == "" {
+				strategyPrompt = `Trading Rules:
+- Only trade when high confidence (>70%) based on technical indicators
+- Use RSI, MACD, Moving Averages for confirmation
+- Minimum risk/reward ratio of 1:2
+- Set stop loss 2-3% from entry
+- Set take profit 4-6% from entry
+- Never risk more than 2% per trade
+- Respect all risk limits and position sizing rules`
+			}
+
+			// Decision interval: 15 minutes default
+			decisionInterval := parseInterval(interval)
+			if decisionInterval < 1*time.Minute {
+				decisionInterval = 15 * time.Minute
+			}
+
+			// Start auto-trading
+			if err := mt.EnableAutoTrading(aiConfig, systemPrompt, strategyPrompt, decisionInterval); err != nil {
+				log.Printf("⚠️ Trader %s: Failed to enable auto-trading: %v", id, err)
+				log.Printf("Trader %s: Will run in MONITOR-ONLY mode (no automatic trades)", id)
+			} else {
+				log.Printf("🤖 Trader %s: AUTO-TRADING ENABLED - AI will make decisions every %v", id, decisionInterval)
+				log.Printf("📊 Trader %s: Self-evolution learning: ACTIVE", id)
+				log.Printf("🛡️ Trader %s: NOFX risk controls: ENFORCED", id)
+			}
+		} else {
+			log.Printf("⚠️ Trader %s: No AI API key configured - running in MONITOR-ONLY mode", id)
+			log.Printf("To enable auto-trading: Configure AI API key in Settings > AI Configuration", id)
+		}
+
+		mt.mu.Lock() // Re-lock before returning
+	}
+
 	return nil
 }
 

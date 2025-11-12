@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -76,6 +78,97 @@ type AIResponse struct {
 type AIClient struct {
 	config     *AIConfig
 	httpClient *http.Client
+}
+
+// GetDefaultAIConfig returns default AI configuration from environment variables
+func GetDefaultAIConfig() *AIConfig {
+	// Try to get AI provider from environment
+	provider := os.Getenv("AI_PROVIDER")
+	if provider == "" {
+		provider = "deepseek" // Default to DeepSeek
+	}
+
+	// Get API key
+	apiKey := os.Getenv("AI_API_KEY")
+	if apiKey == "" {
+		// Try provider-specific keys
+		switch provider {
+		case "openai":
+			apiKey = os.Getenv("OPENAI_API_KEY")
+		case "deepseek":
+			apiKey = os.Getenv("DEEPSEEK_API_KEY")
+		case "claude":
+			apiKey = os.Getenv("ANTHROPIC_API_KEY")
+		case "qwen":
+			apiKey = os.Getenv("QWEN_API_KEY")
+		}
+	}
+
+	// If still no API key, return nil
+	if apiKey == "" {
+		return nil
+	}
+
+	// Get model
+	model := os.Getenv("AI_MODEL")
+	if model == "" {
+		// Provider-specific defaults
+		switch provider {
+		case "openai":
+			model = "gpt-4o-mini"
+		case "deepseek":
+			model = "deepseek-chat"
+		case "claude":
+			model = "claude-3-5-sonnet-20241022"
+		case "qwen":
+			model = "qwen-turbo"
+		default:
+			model = "deepseek-chat"
+		}
+	}
+
+	// Get base URL
+	baseURL := os.Getenv("AI_BASE_URL")
+	if baseURL == "" {
+		// Provider-specific defaults
+		switch provider {
+		case "openai":
+			baseURL = "https://api.openai.com/v1"
+		case "deepseek":
+			baseURL = "https://api.deepseek.com/v1"
+		case "claude":
+			baseURL = "https://api.anthropic.com/v1"
+		case "qwen":
+			baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+		default:
+			baseURL = "https://api.deepseek.com/v1"
+		}
+	}
+
+	// Get max tokens
+	maxTokens := 4000
+	if maxTokensStr := os.Getenv("AI_MAX_TOKENS"); maxTokensStr != "" {
+		if val, err := strconv.Atoi(maxTokensStr); err == nil {
+			maxTokens = val
+		}
+	}
+
+	// Get temperature
+	temperature := 0.7
+	if tempStr := os.Getenv("AI_TEMPERATURE"); tempStr != "" {
+		if val, err := strconv.ParseFloat(tempStr, 64); err == nil {
+			temperature = val
+		}
+	}
+
+	return &AIConfig{
+		Provider:    AIProvider(provider),
+		Model:       model,
+		APIKey:      apiKey,
+		BaseURL:     baseURL,
+		MaxTokens:   maxTokens,
+		Temperature: temperature,
+	}
 }
 
 // NewAIClient creates a new AI client
