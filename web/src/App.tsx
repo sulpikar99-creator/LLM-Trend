@@ -4,6 +4,7 @@ import { Layout } from '@/components/Layout'
 import LoginPage from '@/pages/LoginPage'
 import Dashboard from '@/pages/Dashboard'
 import TradersPage from '@/pages/TradersPage'
+import TraderDetailPage from '@/pages/TraderDetailPage'
 import AnalyticsPage from '@/pages/AnalyticsPage'
 import SettingsPage from '@/pages/SettingsPage'
 
@@ -38,6 +39,16 @@ function App() {
             <ProtectedRoute>
               <Layout>
                 <TradersPage />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/traders/:id"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <TraderDetailPage />
               </Layout>
             </ProtectedRoute>
           }

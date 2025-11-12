@@ -1,10 +1,11 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { motion } from 'framer-motion'
-import { Plus, Play, Square, Trash2 } from 'lucide-react'
+import { Plus, Play, Square, Trash2, Eye } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '@/lib/api'
 import { Card } from '@/components/ui/Card'
@@ -31,6 +32,7 @@ type CreateTraderFormData = z.infer<typeof createTraderSchema>
 export default function TradersPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
 
   const { data: tradersData, isLoading } = useQuery({
     queryKey: ['traders'],
@@ -210,33 +212,47 @@ Output JSON format:
                 )}
 
                 <div className="flex space-x-2">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => navigate(`/traders/${trader.id}`)}
+                    className="flex-1"
+                  >
+                    <Eye className="w-4 h-4 mr-1" />
+                    View Details
+                  </Button>
                   {trader.status === 'running' ? (
                     <Button
                       variant="warning"
                       size="sm"
-                      onClick={() => handleStop(trader.id)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleStop(trader.id)
+                      }}
                       disabled={stopMutation.isPending}
-                      className="flex-1"
                     >
-                      <Square className="w-4 h-4 mr-1" />
-                      Stop
+                      <Square className="w-4 h-4" />
                     </Button>
                   ) : (
                     <Button
                       variant="success"
                       size="sm"
-                      onClick={() => handleStart(trader.id)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleStart(trader.id)
+                      }}
                       disabled={startMutation.isPending}
-                      className="flex-1"
                     >
-                      <Play className="w-4 h-4 mr-1" />
-                      Start
+                      <Play className="w-4 h-4" />
                     </Button>
                   )}
                   <Button
                     variant="danger"
                     size="sm"
-                    onClick={() => handleDelete(trader.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDelete(trader.id)
+                    }}
                     disabled={deleteMutation.isPending}
                   >
                     <Trash2 className="w-4 h-4" />
