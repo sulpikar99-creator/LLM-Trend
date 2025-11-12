@@ -795,15 +795,93 @@ func (mt *ManagedTrader) gatherDecisionContext(ctx context.Context) (*decision.D
 		klines = mt.KlineMonitor.GetKlines()
 	}
 
-	// Get recent decisions (last 10)
+	// Get recent decisions (last 20 for self-evolution analysis)
 	recentDecisions := []*decision.DecisionRecord{}
 	if mt.DecisionLogger != nil {
-		decisions, err := mt.DecisionLogger.GetLatestDecisions(mt.ID, 10)
+		decisionsMap, err := mt.DecisionLogger.GetLatestDecisions(mt.ID, 20)
 		if err == nil {
-			// Convert to DecisionRecord (simplified)
-			for _, d := range decisions {
-				// We can parse these back if needed
-				_ = d
+			// Convert map[string]interface{} to DecisionRecord
+			for _, d := range decisionsMap {
+				record := &decision.DecisionRecord{}
+
+				// Parse basic fields
+				if id, ok := d["id"].(string); ok {
+					record.ID = id
+				}
+				if traderID, ok := d["trader_id"].(string); ok {
+					record.TraderID = traderID
+				}
+				if cycleNum, ok := d["cycle_number"].(float64); ok {
+					record.CycleNumber = int(cycleNum)
+				}
+				if timestamp, ok := d["timestamp"].(string); ok {
+					if t, err := time.Parse(time.RFC3339, timestamp); err == nil {
+						record.Timestamp = t
+					}
+				}
+
+				// Parse decision
+				if decisionData, ok := d["decision"].(map[string]interface{}); ok {
+					dec := &decision.TradingDecision{}
+					if action, ok := decisionData["action"].(string); ok {
+						dec.Action = decision.DecisionAction(action)
+					}
+					if symbol, ok := decisionData["symbol"].(string); ok {
+						dec.Symbol = symbol
+					}
+					if reasoning, ok := decisionData["reasoning"].(string); ok {
+						dec.Reasoning = reasoning
+					}
+					if confidence, ok := decisionData["confidence"].(float64); ok {
+						dec.Confidence = confidence
+					}
+					if sl, ok := decisionData["stop_loss"].(float64); ok {
+						dec.StopLoss = sl
+					}
+					if tp, ok := decisionData["take_profit"].(float64); ok {
+						dec.TakeProfit = tp
+					}
+					record.Decision = dec
+				}
+
+				// Parse account state
+				if accountData, ok := d["account_state"].(map[string]interface{}); ok {
+					acc := &decision.AccountSnapshot{}
+					if tb, ok := accountData["total_balance"].(float64); ok {
+						acc.TotalBalance = tb
+					}
+					if ab, ok := accountData["available_balance"].(float64); ok {
+						acc.AvailableBalance = ab
+					}
+					if up, ok := accountData["unrealized_pnl"].(float64); ok {
+						acc.UnrealizedPnL = up
+					}
+					record.AccountState = acc
+				}
+
+				// Parse position snapshots
+				if positionsData, ok := d["position_snapshots"].([]interface{}); ok {
+					for _, posData := range positionsData {
+						if posMap, ok := posData.(map[string]interface{}); ok {
+							pos := &decision.PositionSnapshot{}
+							if symbol, ok := posMap["symbol"].(string); ok {
+								pos.Symbol = symbol
+							}
+							if side, ok := posMap["side"].(string); ok {
+								pos.Side = side
+							}
+							if up, ok := posMap["unrealized_pnl"].(float64); ok {
+								pos.UnrealizedPnL = up
+							}
+							if upp, ok := posMap["unrealized_pnl_pct"].(float64); ok {
+								pos.UnrealizedPnLPct = upp
+							}
+							record.PositionSnapshots = append(record.PositionSnapshots, pos)
+						}
+					}
+				}
+
+				recentDecisions = append(recentDecisions, record)
 			}
 		}
 	}
