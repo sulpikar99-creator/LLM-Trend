@@ -80,6 +80,124 @@ func (tm *TraderManager) SetDatabase(db *sql.DB) {
 	}
 }
 
+// LoadTradersFromDatabase loads all traders from database and adds them to the manager
+// This should be called during application startup to restore trader instances
+func (tm *TraderManager) LoadTradersFromDatabase(db *sql.DB, cryptoService interface{}) error {
+	log.Println("Loading traders from database...")
+
+	// Define CryptoService interface
+	type CryptoService interface {
+		DecryptAES(encrypted string) (string, error)
+	}
+
+	crypto, ok := cryptoService.(CryptoService)
+	if !ok {
+		return fmt.Errorf("invalid crypto service provided")
+	}
+
+	// Query all traders from database
+	rows, err := db.Query(`
+		SELECT id, user_id, name, exchange_type, symbol, interval, exchange_config
+		FROM traders
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to query traders: %w", err)
+	}
+	defer rows.Close()
+
+	loadedCount := 0
+	failedCount := 0
+
+	for rows.Next() {
+		var id, userID, name, exchangeType, symbol, interval string
+		var exchangeConfigJSON string
+
+		if err := rows.Scan(&id, &userID, &name, &exchangeType, &symbol, &interval, &exchangeConfigJSON); err != nil {
+			log.Printf("Error scanning trader row: %v", err)
+			failedCount++
+			continue
+		}
+
+		// Parse exchange config
+		var exchangeConfig map[string]interface{}
+		if err := json.Unmarshal([]byte(exchangeConfigJSON), &exchangeConfig); err != nil {
+			log.Printf("Error parsing exchange config for trader %s: %v", id, err)
+			failedCount++
+			continue
+		}
+
+		// Decrypt API credentials
+		apiKeyEncrypted, ok := exchangeConfig["api_key_encrypted"].(string)
+		if !ok {
+			log.Printf("Missing api_key_encrypted for trader %s", id)
+			failedCount++
+			continue
+		}
+
+		apiSecretEncrypted, ok := exchangeConfig["api_secret_encrypted"].(string)
+		if !ok {
+			log.Printf("Missing api_secret_encrypted for trader %s", id)
+			failedCount++
+			continue
+		}
+
+		apiKey, err := crypto.DecryptAES(apiKeyEncrypted)
+		if err != nil {
+			log.Printf("Failed to decrypt API key for trader %s: %v", id, err)
+			failedCount++
+			continue
+		}
+
+		apiSecret, err := crypto.DecryptAES(apiSecretEncrypted)
+		if err != nil {
+			log.Printf("Failed to decrypt API secret for trader %s: %v", id, err)
+			failedCount++
+			continue
+		}
+
+		// Get testnet setting
+		testnet := false
+		if testnetVal, ok := exchangeConfig["testnet"].(bool); ok {
+			testnet = testnetVal
+		}
+
+		// Create trader instance based on exchange type
+		var t trader.Trader
+		switch exchangeType {
+		case "binance_futures":
+			t = trader.NewBinanceFuturesTrader(name, apiKey, apiSecret, testnet)
+		default:
+			log.Printf("Unsupported exchange type %s for trader %s", exchangeType, id)
+			failedCount++
+			continue
+		}
+
+		// Add trader to manager
+		_, err = tm.AddTrader(id, userID, t)
+		if err != nil {
+			// If trader already exists (e.g., from a previous load), skip
+			if strings.Contains(err.Error(), "already exists") {
+				log.Printf("Trader %s already loaded, skipping", id)
+				continue
+			}
+			log.Printf("Failed to add trader %s to manager: %v", id, err)
+			failedCount++
+			continue
+		}
+
+		loadedCount++
+		log.Printf("Loaded trader %s (%s) for user %s - %s on %s", id, name, userID, symbol, exchangeType)
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating traders: %w", err)
+	}
+
+	log.Printf("Trader loading complete: %d loaded, %d failed", loadedCount, failedCount)
+	return nil
+}
+
 // AddTrader adds a trader to the manager
 func (tm *TraderManager) AddTrader(id, userID string, t trader.Trader) (*ManagedTrader, error) {
 	tm.mu.Lock()

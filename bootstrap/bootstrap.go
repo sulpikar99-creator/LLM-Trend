@@ -62,6 +62,12 @@ func Initialize() (*Application, error) {
 	// Set database connection for trader statistics
 	traderMgr.SetDatabase(db.DB)
 
+	// Load existing traders from database (critical for reconnecting after restart)
+	if err := traderMgr.LoadTradersFromDatabase(db.DB, cryptoService); err != nil {
+		log.Printf("Warning: Failed to load traders from database: %v", err)
+		// Don't fail startup - we can still create new traders
+	}
+
 	app := &Application{
 		Config:        cfg,
 		Database:      db,
