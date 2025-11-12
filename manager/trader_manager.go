@@ -220,6 +220,25 @@ func (tm *TraderManager) StartTrader(id, symbol, interval string) error {
 		return err
 	}
 
+	// Initialize AccountRisk monitor with default conservative config
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	balance, err := mt.Trader.GetBalance(ctx)
+	if err == nil && balance != nil {
+		// Initialize with NOFX-style conservative defaults
+		riskConfig := risk.DefaultAccountRiskConfig()
+		mt.AccountRisk = risk.NewAccountRiskMonitor(riskConfig, balance.Balance)
+		log.Printf("Trader %s: Risk monitor initialized with balance $%.2f", id, balance.Balance)
+		log.Printf("Risk limits: Altcoin %dx, BTC/ETH %dx, Min volume $%.0fM, Max margin %.0f%%",
+			riskConfig.AltcoinMaxLeverage,
+			riskConfig.MajorCoinMaxLeverage,
+			riskConfig.MinVolumeUSD24h/1000000,
+			riskConfig.MaxMarginUtilization*100)
+	} else {
+		log.Printf("Warning: Failed to initialize risk monitor: %v", err)
+	}
+
 	// Start kline monitor if symbol specified
 	if symbol != "" && interval != "" {
 		// Store symbol for later reference
@@ -259,200 +278,11 @@ func (tm *TraderManager) StartTrader(id, symbol, interval string) error {
 			return err
 		}
 
-		// Start trading loop in background
-		go mt.runTradingLoop(interval)
+		log.Printf("Trader %s: Kline monitor started for %s %s", id, symbol, interval)
 	}
 
 	mt.Status = TraderStatusRunning
-	log.Printf("Trader %s started", id)
-	return nil
-}
-
-// runTradingLoop executes the main trading loop
-func (mt *ManagedTrader) runTradingLoop(interval string) {
-	// Parse interval to duration
-	intervalDuration := parseInterval(interval)
-	if intervalDuration == 0 {
-		intervalDuration = 15 * time.Minute // Default 15m
-	}
-
-	ticker := time.NewTicker(intervalDuration)
-	defer ticker.Stop()
-
-	log.Printf("Trading loop started for trader %s (interval: %s)", mt.ID, interval)
-
-	for {
-		select {
-		case <-mt.ctx.Done():
-			log.Printf("Trading loop stopped for trader %s", mt.ID)
-			return
-
-		case <-ticker.C:
-			// Get latest klines
-			klines := mt.KlineMonitor.GetKlines(100)
-			if len(klines) == 0 {
-				log.Printf("Trader %s: No klines available yet", mt.ID)
-				continue
-			}
-
-			// Get current position
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			positions, err := mt.Trader.GetPositions(ctx)
-			cancel()
-			if err != nil {
-				log.Printf("Trader %s: Failed to get positions: %v", mt.ID, err)
-				continue
-			}
-
-			// Get account balance
-			ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
-			balance, err := mt.Trader.GetBalance(ctx)
-			cancel()
-			if err != nil {
-				log.Printf("Trader %s: Failed to get balance: %v", mt.ID, err)
-				continue
-			}
-
-			// Make AI decision if DecisionEngine is configured
-			if mt.DecisionEngine != nil && mt.StrategyPrompt != "" {
-				decision, err := mt.DecisionEngine.MakeDecision(
-					ctx,
-					klines,
-					positions,
-					balance,
-					mt.StrategyPrompt,
-				)
-				if err != nil {
-					log.Printf("Trader %s: AI decision failed: %v", mt.ID, err)
-					continue
-				}
-
-				// Log decision
-				if mt.DecisionLogger != nil {
-					mt.DecisionLogger.LogDecision(mt.ID, decision)
-				}
-
-				// Execute decision
-				if err := mt.executeDecision(decision, balance); err != nil {
-					log.Printf("Trader %s: Failed to execute decision: %v", mt.ID, err)
-					continue
-				}
-
-				log.Printf("Trader %s: Decision executed - Action: %s, Confidence: %.2f",
-					mt.ID, decision.Action, decision.Confidence)
-			}
-		}
-	}
-}
-
-// executeDecision executes the AI trading decision
-func (mt *ManagedTrader) executeDecision(decision *decision.Decision, balance *trader.Balance) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	switch decision.Action {
-	case "buy", "long":
-		// Calculate position size
-		availableBalance := balance.AvailableBalance
-		if availableBalance == 0 {
-			return fmt.Errorf("no available balance")
-		}
-
-		positionSize := availableBalance * (decision.PositionSizePct / 100.0)
-		if mt.MaxPositionUSD > 0 && positionSize > mt.MaxPositionUSD {
-			positionSize = mt.MaxPositionUSD
-		}
-
-		// Place buy order
-		orderReq := &trader.OrderRequest{
-			Symbol:     mt.Symbol,
-			Side:       trader.OrderSideBuy,
-			Type:       trader.OrderTypeMarket,
-			Quantity:   positionSize / decision.EntryPrice, // Convert USD to quantity
-			Price:      0, // Market order
-			StopPrice:  decision.StopLoss,
-			ReduceOnly: false,
-		}
-
-		result, err := mt.Trader.PlaceOrder(ctx, orderReq)
-		if err != nil {
-			return fmt.Errorf("failed to place buy order: %w", err)
-		}
-
-		log.Printf("Trader %s: BUY order placed - OrderID: %d, Quantity: %.4f",
-			mt.ID, result.OrderID, result.ExecutedQty)
-
-	case "sell", "short":
-		// Close existing long position or open short
-		positions, err := mt.Trader.GetPositions(ctx)
-		if err != nil {
-			return err
-		}
-
-		// Check if we have a long position to close
-		hasLongPosition := false
-		for _, pos := range positions {
-			if pos.Symbol == mt.Symbol && pos.Side == trader.PositionSideLong {
-				hasLongPosition = true
-				// Close the position
-				orderReq := &trader.OrderRequest{
-					Symbol:     mt.Symbol,
-					Side:       trader.OrderSideSell,
-					Type:       trader.OrderTypeMarket,
-					Quantity:   pos.Size,
-					ReduceOnly: true,
-				}
-				_, err := mt.Trader.PlaceOrder(ctx, orderReq)
-				if err != nil {
-					return fmt.Errorf("failed to close long position: %w", err)
-				}
-				log.Printf("Trader %s: Long position closed", mt.ID)
-			}
-		}
-
-		if !hasLongPosition {
-			log.Printf("Trader %s: No long position to close, holding", mt.ID)
-		}
-
-	case "close":
-		// Close all positions
-		positions, err := mt.Trader.GetPositions(ctx)
-		if err != nil {
-			return err
-		}
-
-		for _, pos := range positions {
-			if pos.Symbol == mt.Symbol {
-				side := trader.OrderSideSell
-				if pos.Side == trader.PositionSideShort {
-					side = trader.OrderSideBuy
-				}
-
-				orderReq := &trader.OrderRequest{
-					Symbol:     mt.Symbol,
-					Side:       side,
-					Type:       trader.OrderTypeMarket,
-					Quantity:   pos.Size,
-					ReduceOnly: true,
-				}
-
-				_, err := mt.Trader.PlaceOrder(ctx, orderReq)
-				if err != nil {
-					log.Printf("Trader %s: Failed to close position: %v", mt.ID, err)
-				} else {
-					log.Printf("Trader %s: Position closed", mt.ID)
-				}
-			}
-		}
-
-	case "hold":
-		// Do nothing, just hold current position
-		log.Printf("Trader %s: Holding position", mt.ID)
-
-	default:
-		log.Printf("Trader %s: Unknown action: %s", mt.ID, decision.Action)
-	}
-
+	log.Printf("Trader %s started successfully", id)
 	return nil
 }
 
@@ -969,6 +799,7 @@ func (mt *ManagedTrader) openPosition(ctx context.Context, dec *decision.Trading
 		// Check if trading is allowed
 		canTrade, reason := mt.AccountRisk.CanTrade()
 		if !canTrade {
+			log.Printf("Risk check failed: %s", reason)
 			return fmt.Errorf("risk check failed: %s", reason)
 		}
 
@@ -983,27 +814,65 @@ func (mt *ManagedTrader) openPosition(ctx context.Context, dec *decision.Trading
 			totalExposure += pos.Notional
 		}
 
-		// Get current market price for size estimation
+		// Get current market price and balance
 		balance, err := mt.Trader.GetBalance(ctx)
 		if err == nil && mt.AccountRisk != nil {
 			mt.AccountRisk.UpdateBalance(balance.Balance)
 		}
 
-		// Estimate position size (using decision size as approximation)
-		positionSizeUSD := dec.Size * 50000.0 // Rough estimate, will be refined
+		// Get market data for current price
+		marketData, err := mt.GetMarketData()
+		if err != nil {
+			return fmt.Errorf("failed to get market data: %w", err)
+		}
+
+		// Calculate actual position size in USD
+		currentPrice := marketData.Price
+		positionSizeUSD := dec.Size * currentPrice * float64(dec.Leverage)
+
+		// Check position limits
 		canOpen, reason := mt.AccountRisk.CanOpenPosition(positionSizeUSD, len(positions), totalExposure)
 		if !canOpen {
-			return fmt.Errorf("risk check failed: %s", reason)
+			log.Printf("Position limit check failed: %s", reason)
+			return fmt.Errorf("position limit check failed: %s", reason)
 		}
 
-		// Validate leverage
-		canUseLeverage, reason := mt.AccountRisk.ValidateLeverage(dec.Symbol, dec.Leverage)
+		// Validate leverage based on symbol type (NOFX-style: 2x altcoins, 10x BTC/ETH)
+		canUseLeverage, reason := mt.AccountRisk.ValidateLeverageForSymbol(dec.Symbol, dec.Leverage)
 		if !canUseLeverage {
-			return fmt.Errorf("leverage check failed: %s", reason)
+			log.Printf("Leverage validation failed: %s", reason)
+			return fmt.Errorf("leverage validation failed: %s", reason)
 		}
 
-		// Record trade
+		// Validate stop-loss ratio (NOFX-style: minimum 1:2 SL:TP)
+		isLong := side == trader.OrderSideBuy
+		canSLTP, reason := mt.AccountRisk.ValidateStopLossRatio(currentPrice, dec.StopLoss, dec.TakeProfit, isLong)
+		if !canSLTP {
+			log.Printf("Stop-loss ratio validation failed: %s", reason)
+			return fmt.Errorf("stop-loss ratio validation failed: %s", reason)
+		}
+
+		// Validate volume (NOFX-style: minimum $15M daily volume)
+		volume24hUSD := marketData.Volume24h
+		canVolume, reason := mt.AccountRisk.ValidateVolume(volume24hUSD, dec.Symbol)
+		if !canVolume {
+			log.Printf("Volume validation failed: %s", reason)
+			return fmt.Errorf("volume validation failed: %s", reason)
+		}
+
+		// Validate margin utilization (NOFX-style: max 90%)
+		if balance != nil {
+			marginUsed := balance.Balance - balance.AvailableBalance
+			canMargin, reason := mt.AccountRisk.ValidateMarginUtilization(balance.Balance, marginUsed)
+			if !canMargin {
+				log.Printf("Margin utilization check failed: %s", reason)
+				return fmt.Errorf("margin utilization check failed: %s", reason)
+			}
+		}
+
+		// All risk checks passed, record trade
 		mt.AccountRisk.RecordTrade()
+		log.Printf("✅ All risk checks passed for %s %s position", dec.Symbol, side)
 	}
 
 	// Set leverage first
