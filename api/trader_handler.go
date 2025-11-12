@@ -336,7 +336,7 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 	}
 
 	// Get trader from manager
-	mt, err := s.app.TraderManager.GetTrader(traderID)
+	_, err = s.app.TraderManager.GetTrader(traderID)
 	if err != nil {
 		errorResponse(c, http.StatusNotFound, "Trader not found in manager")
 		return
