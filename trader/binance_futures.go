@@ -62,14 +62,23 @@ func (b *BinanceFuturesTrader) GetExchangeType() string {
 
 // Connect establishes connection to Binance Futures
 func (b *BinanceFuturesTrader) Connect(ctx context.Context) error {
+	fmt.Printf("🔌 Connecting to Binance Futures: %s\n", b.baseURL)
+	fmt.Printf("   Trader: %s\n", b.name)
+	fmt.Printf("   API Key: %s...%s\n", b.apiKey[:min(8, len(b.apiKey))], b.apiKey[max(0, len(b.apiKey)-4):])
+
 	// Test connection by fetching server time
-	resp, err := b.httpClient.Get(b.baseURL + "/fapi/v1/time")
+	endpoint := b.baseURL + "/fapi/v1/time"
+	fmt.Printf("   Testing connection: %s\n", endpoint)
+
+	resp, err := b.httpClient.Get(endpoint)
 	if err != nil {
+		fmt.Printf("❌ Connection failed: %v\n", err)
 		return fmt.Errorf("failed to connect to Binance Futures: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		fmt.Printf("❌ Binance returned status %d\n", resp.StatusCode)
 		return fmt.Errorf("Binance Futures returned status %d", resp.StatusCode)
 	}
 
@@ -77,7 +86,22 @@ func (b *BinanceFuturesTrader) Connect(ctx context.Context) error {
 	b.connected = true
 	b.mu.Unlock()
 
+	fmt.Printf("✅ Successfully connected to Binance Futures!\n")
 	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // Disconnect closes connection
@@ -150,8 +174,10 @@ func (b *BinanceFuturesTrader) doRequest(ctx context.Context, method, endpoint s
 
 // GetBalance fetches account balance
 func (b *BinanceFuturesTrader) GetBalance(ctx context.Context) (*Balance, error) {
+	fmt.Printf("💰 Fetching balance for %s...\n", b.name)
 	data, err := b.doRequest(ctx, http.MethodGet, "/fapi/v2/balance", nil, true)
 	if err != nil {
+		fmt.Printf("❌ GetBalance failed: %v\n", err)
 		return nil, err
 	}
 

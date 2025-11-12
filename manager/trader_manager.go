@@ -332,11 +332,14 @@ func (tm *TraderManager) StartTrader(id, symbol, interval string) error {
 	}
 
 	// Connect to exchange
+	log.Printf("⏳ Trader %s: Attempting to connect to %s...", id, mt.Trader.GetExchangeType())
 	if err := mt.Trader.Connect(mt.ctx); err != nil {
 		mt.Status = TraderStatusError
 		mt.ErrorMessage = fmt.Sprintf("Failed to connect: %v", err)
+		log.Printf("❌ Trader %s: Connection FAILED: %v", id, err)
 		return err
 	}
+	log.Printf("✅ Trader %s: Successfully connected to exchange", id)
 
 	// Initialize AccountRisk monitor with default conservative config
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
