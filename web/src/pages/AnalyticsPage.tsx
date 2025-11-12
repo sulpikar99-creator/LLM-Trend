@@ -22,7 +22,6 @@ import { Activity, DollarSign, Target, AlertTriangle } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Card } from '@/components/ui/Card'
 import { Select } from '@/components/ui/Select'
-import type { Trader } from '@/types'
 
 export default function AnalyticsPage() {
   const [selectedTrader, setSelectedTrader] = useState<string>('all')

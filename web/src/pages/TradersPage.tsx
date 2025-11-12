@@ -13,7 +13,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Badge } from '@/components/ui/Badge'
-import type { Trader, CreateTraderRequest } from '@/types'
+import type { CreateTraderRequest } from '@/types'
 
 const createTraderSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),

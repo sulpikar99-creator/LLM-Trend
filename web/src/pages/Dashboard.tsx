@@ -5,7 +5,6 @@ import { TrendingUp, TrendingDown, Bot, DollarSign, Activity, AlertCircle } from
 import { api } from '@/lib/api'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
-import type { Trader } from '@/types'
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
