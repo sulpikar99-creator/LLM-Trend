@@ -1,300 +1,167 @@
-import { useState, useEffect } from 'react'
-import { useAuth } from '../contexts/AuthContext'
-import { useNavigate } from 'react-router-dom'
-import { api } from '../lib/api'
-
-interface DashboardStats {
-  totalPnL: number
-  activeTraders: number
-  totalTraders: number
-  winRate: number
-  totalTrades: number
-}
+import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { motion } from 'framer-motion'
+import { TrendingUp, TrendingDown, Bot, DollarSign, Activity, AlertCircle } from 'lucide-react'
+import { api } from '@/lib/api'
+import { Card } from '@/components/ui/Card'
+import { Badge } from '@/components/ui/Badge'
+import type { Trader } from '@/types'
 
 export default function Dashboard() {
-  const { user, logout } = useAuth()
-  const navigate = useNavigate()
-  const [stats, setStats] = useState<DashboardStats>({
+  const [stats, setStats] = useState({
     totalPnL: 0,
     activeTraders: 0,
     totalTraders: 0,
     winRate: 0,
-    totalTrades: 0,
   })
-  const [loading, setLoading] = useState(true)
-  const [recentActivity, setRecentActivity] = useState<string[]>([])
+
+  const { data: tradersData } = useQuery({
+    queryKey: ['traders'],
+    queryFn: () => api.listTraders(),
+  })
+
+  const { data: performanceData } = useQuery({
+    queryKey: ['performance'],
+    queryFn: () => api.getPerformance(),
+  })
 
   useEffect(() => {
-    loadDashboardData()
-  }, [])
-
-  const loadDashboardData = async () => {
-    try {
-      setLoading(true)
-
-      // Load traders and performance data in parallel
-      const [tradersResp, performanceResp] = await Promise.all([
-        api.listTraders().catch(() => ({ data: [] })),
-        api.getPerformance().catch(() => ({ data: null })),
-      ])
-
-      const traders = tradersResp.data || []
-      const performanceData = performanceResp.data
-
-      // Calculate stats
-      const activeTraders = traders.filter((t: any) => t.status === 'running').length
-      const totalPnL = performanceData?.overall_metrics?.total_pnl || 0
-      const winRate = performanceData?.overall_metrics?.win_rate || 0
-      const totalTrades = performanceData?.total_trades || 0
+    if (tradersData?.data && performanceData?.data) {
+      const traders = tradersData.data as Trader[]
+      const perf = performanceData.data
 
       setStats({
-        totalPnL,
-        activeTraders,
+        totalPnL: perf.overall_metrics?.total_pnl || 0,
+        activeTraders: traders.filter((t) => t.status === 'running').length,
         totalTraders: traders.length,
-        winRate,
-        totalTrades,
+        winRate: perf.overall_metrics?.win_rate || 0,
       })
-
-      // Generate recent activity
-      const activity: string[] = []
-      if (traders.length > 0) {
-        activity.push(`You have ${traders.length} trader${traders.length !== 1 ? 's' : ''} configured`)
-      }
-      if (activeTraders > 0) {
-        activity.push(`${activeTraders} trader${activeTraders !== 1 ? 's are' : ' is'} currently running`)
-      }
-      if (totalTrades > 0) {
-        activity.push(`Executed ${totalTrades} trade${totalTrades !== 1 ? 's' : ''} total`)
-      }
-      if (activity.length === 0) {
-        activity.push('No trading activity yet')
-      }
-      setRecentActivity(activity)
-    } catch (err) {
-      console.error('Failed to load dashboard data:', err)
-    } finally {
-      setLoading(false)
     }
-  }
+  }, [tradersData, performanceData])
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(value)
-  }
-
-  const formatPercent = (value: number) => {
-    return `${(value * 100).toFixed(1)}%`
-  }
+  const statCards = [
+    {
+      title: 'Total P&L',
+      value: `$${stats.totalPnL.toFixed(2)}`,
+      icon: DollarSign,
+      color: stats.totalPnL >= 0 ? 'text-success' : 'text-danger',
+      bgColor: stats.totalPnL >= 0 ? 'bg-success/10' : 'bg-danger/10',
+      trend: stats.totalPnL >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />,
+    },
+    {
+      title: 'Active Traders',
+      value: `${stats.activeTraders}/${stats.totalTraders}`,
+      icon: Bot,
+      color: 'text-primary',
+      bgColor: 'bg-primary/10',
+      trend: <Activity className="w-4 h-4" />,
+    },
+    {
+      title: 'Win Rate',
+      value: `${(stats.winRate * 100).toFixed(1)}%`,
+      icon: TrendingUp,
+      color: 'text-success',
+      bgColor: 'bg-success/10',
+      trend: null,
+    },
+  ]
 
   return (
-    <div className="min-h-screen bg-background">
-      <nav className="bg-card border-b border-border">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16 items-center">
-            <div className="flex items-center space-x-8">
-              <h1 className="text-xl font-bold text-primary">LLM Trend</h1>
-              <div className="flex space-x-4">
-                <button
-                  onClick={() => navigate('/')}
-                  className="text-white hover:text-primary"
-                >
-                  Dashboard
-                </button>
-                <button
-                  onClick={() => navigate('/traders')}
-                  className="text-white hover:text-primary"
-                >
-                  Traders
-                </button>
-                <button
-                  onClick={() => navigate('/analytics')}
-                  className="text-white hover:text-primary"
-                >
-                  Analytics
-                </button>
-                <button
-                  onClick={() => navigate('/settings')}
-                  className="text-white hover:text-primary"
-                >
-                  Settings
-                </button>
-              </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              <span className="text-gray-400">Welcome, {user?.username || 'User'}</span>
-              <button
-                onClick={logout}
-                className="px-4 py-2 bg-danger hover:bg-danger/90 text-white rounded"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-      </nav>
+    <div className="space-y-8">
+      {/* Header */}
+      <div>
+        <h1 className="text-4xl font-bold mb-2">Dashboard</h1>
+        <p className="text-gray-400">Monitor your AI trading performance in real-time</p>
+      </div>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold">Dashboard</h2>
-          <p className="text-gray-400 mt-2">Monitor your AI trading performance</p>
-        </div>
-
-        {loading ? (
-          <div className="text-center py-12">
-            <p className="text-gray-400">Loading dashboard...</p>
-          </div>
-        ) : (
-          <>
-            {/* Stats Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-              <div className="bg-card border border-border rounded-lg p-6">
-                <h3 className="text-sm text-gray-400 mb-2">Total P&L</h3>
-                <p className={`text-3xl font-bold ${stats.totalPnL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  {formatCurrency(stats.totalPnL)}
-                </p>
-                {stats.totalTrades > 0 && (
-                  <p className="text-xs text-gray-500 mt-2">
-                    from {stats.totalTrades} trade{stats.totalTrades !== 1 ? 's' : ''}
-                  </p>
-                )}
-              </div>
-
-              <div className="bg-card border border-border rounded-lg p-6">
-                <h3 className="text-sm text-gray-400 mb-2">Active Traders</h3>
-                <p className="text-3xl font-bold text-primary">{stats.activeTraders}</p>
-                <p className="text-xs text-gray-500 mt-2">
-                  of {stats.totalTraders} total
-                </p>
-              </div>
-
-              <div className="bg-card border border-border rounded-lg p-6">
-                <h3 className="text-sm text-gray-400 mb-2">Win Rate</h3>
-                <p className="text-3xl font-bold">
-                  {stats.totalTrades > 0 ? formatPercent(stats.winRate) : '—'}
-                </p>
-                {stats.totalTrades > 0 && (
-                  <p className="text-xs text-gray-500 mt-2">
-                    {Math.round(stats.winRate * stats.totalTrades)} winning trades
-                  </p>
-                )}
-              </div>
-
-              <div className="bg-card border border-border rounded-lg p-6">
-                <h3 className="text-sm text-gray-400 mb-2">Total Trades</h3>
-                <p className="text-3xl font-bold">{stats.totalTrades}</p>
-                <p className="text-xs text-gray-500 mt-2">all time</p>
-              </div>
-            </div>
-
-            {/* Quick Actions */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-              <div className="bg-card border border-border rounded-lg p-6">
-                <h3 className="text-xl font-bold mb-4">Quick Actions</h3>
-                <div className="space-y-3">
-                  <button
-                    onClick={() => navigate('/traders')}
-                    className="w-full px-4 py-3 bg-primary hover:bg-primary/90 text-white rounded font-medium text-left flex items-center justify-between"
-                  >
-                    <span>Manage Traders</span>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => navigate('/analytics')}
-                    className="w-full px-4 py-3 bg-card hover:bg-border border border-border text-white rounded font-medium text-left flex items-center justify-between"
-                  >
-                    <span>View Analytics</span>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => navigate('/settings')}
-                    className="w-full px-4 py-3 bg-card hover:bg-border border border-border text-white rounded font-medium text-left flex items-center justify-between"
-                  >
-                    <span>Configure Settings</span>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
+      {/* Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {statCards.map((stat, index) => {
+          const Icon = stat.icon
+          return (
+            <motion.div
+              key={stat.title}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.1 }}
+            >
+              <Card hover>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-400 mb-1">{stat.title}</p>
+                    <p className={`text-3xl font-bold ${stat.color}`}>{stat.value}</p>
+                  </div>
+                  <div className={`p-4 rounded-xl ${stat.bgColor}`}>
+                    <Icon className={`w-8 h-8 ${stat.color}`} />
+                  </div>
                 </div>
-              </div>
-
-              <div className="bg-card border border-border rounded-lg p-6">
-                <h3 className="text-xl font-bold mb-4">Recent Activity</h3>
-                <ul className="space-y-2">
-                  {recentActivity.map((activity, idx) => (
-                    <li key={idx} className="flex items-start text-gray-400">
-                      <svg className="w-5 h-5 mr-2 mt-0.5 text-primary" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                      <span>{activity}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-
-            {/* Getting Started */}
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h3 className="text-xl font-bold mb-4">
-                {stats.totalTraders === 0 ? 'Getting Started' : 'System Status'}
-              </h3>
-              {stats.totalTraders === 0 ? (
-                <>
-                  <p className="text-gray-400 mb-4">
-                    Welcome to LLM Trend! Get started with AI-powered trading in 3 simple steps:
-                  </p>
-                  <ol className="list-decimal list-inside space-y-2 text-gray-400">
-                    <li>Configure your risk limits and AI settings in Settings</li>
-                    <li>Create your first AI trader in the Traders section</li>
-                    <li>Monitor performance in real-time with Analytics</li>
-                  </ol>
-                  <div className="mt-6">
-                    <button
-                      onClick={() => navigate('/traders')}
-                      className="px-6 py-3 bg-primary hover:bg-primary/90 text-white rounded font-medium"
-                    >
-                      Create Your First Trader
-                    </button>
+                {stat.trend && (
+                  <div className={`mt-4 flex items-center space-x-2 ${stat.color}`}>
+                    {stat.trend}
+                    <span className="text-sm">Live</span>
                   </div>
-                </>
-              ) : (
-                <>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="flex items-center">
-                      <div className={`w-3 h-3 rounded-full mr-3 ${stats.activeTraders > 0 ? 'bg-green-500' : 'bg-gray-500'}`}></div>
-                      <div>
-                        <p className="text-sm text-gray-400">Trading Status</p>
-                        <p className="font-bold">
-                          {stats.activeTraders > 0 ? 'Active' : 'Inactive'}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="w-3 h-3 rounded-full bg-green-500 mr-3"></div>
-                      <div>
-                        <p className="text-sm text-gray-400">API Status</p>
-                        <p className="font-bold">Connected</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="w-3 h-3 rounded-full bg-green-500 mr-3"></div>
-                      <div>
-                        <p className="text-sm text-gray-400">Database</p>
-                        <p className="font-bold">Operational</p>
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
+                )}
+              </Card>
+            </motion.div>
+          )
+        })}
+      </div>
+
+      {/* Quick Info */}
+      {stats.totalTraders === 0 && (
+        <Card>
+          <div className="flex items-center space-x-4">
+            <div className="p-3 bg-primary/10 rounded-xl">
+              <AlertCircle className="w-6 h-6 text-primary" />
             </div>
-          </>
-        )}
-      </main>
+            <div>
+              <h3 className="font-semibold mb-1">Get Started</h3>
+              <p className="text-gray-400 text-sm">
+                Create your first AI trader to start automated trading
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Traders List */}
+      {tradersData?.data && tradersData.data.length > 0 && (
+        <div>
+          <h2 className="text-2xl font-bold mb-4">Your Traders</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {(tradersData.data as Trader[]).map((trader) => (
+              <Card key={trader.id} hover>
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h3 className="font-bold text-lg">{trader.name}</h3>
+                    <p className="text-sm text-gray-400">{trader.symbol} • {trader.interval}</p>
+                  </div>
+                  <Badge
+                    variant={
+                      trader.status === 'running'
+                        ? 'success'
+                        : trader.status === 'error'
+                        ? 'danger'
+                        : 'default'
+                    }
+                  >
+                    {trader.status}
+                  </Badge>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Exchange</span>
+                    <span className="font-medium">{trader.exchange_type}</span>
+                  </div>
+                  {trader.exchange_config?.testnet && (
+                    <Badge variant="warning" size="sm">Testnet</Badge>
+                  )}
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
