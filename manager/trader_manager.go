@@ -346,14 +346,14 @@ func (mt *ManagedTrader) runTradingLoop(interval string) {
 }
 
 // executeDecision executes the AI trading decision
-func (mt *ManagedTrader) executeDecision(decision *decision.Decision, balance map[string]float64) error {
+func (mt *ManagedTrader) executeDecision(decision *decision.Decision, balance *trader.Balance) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	switch decision.Action {
 	case "buy", "long":
 		// Calculate position size
-		availableBalance := balance["available_balance"]
+		availableBalance := balance.AvailableBalance
 		if availableBalance == 0 {
 			return fmt.Errorf("no available balance")
 		}
@@ -364,22 +364,23 @@ func (mt *ManagedTrader) executeDecision(decision *decision.Decision, balance ma
 		}
 
 		// Place buy order
-		order := &trader.Order{
-			Symbol:    mt.Symbol,
-			Side:      "BUY",
-			Type:      "MARKET",
-			Quantity:  positionSize / decision.EntryPrice, // Convert USD to quantity
-			StopLoss:  decision.StopLoss,
-			TakeProfit: decision.TakeProfit,
+		orderReq := &trader.OrderRequest{
+			Symbol:     mt.Symbol,
+			Side:       trader.OrderSideBuy,
+			Type:       trader.OrderTypeMarket,
+			Quantity:   positionSize / decision.EntryPrice, // Convert USD to quantity
+			Price:      0, // Market order
+			StopPrice:  decision.StopLoss,
+			ReduceOnly: false,
 		}
 
-		result, err := mt.Trader.PlaceOrder(ctx, order)
+		result, err := mt.Trader.PlaceOrder(ctx, orderReq)
 		if err != nil {
 			return fmt.Errorf("failed to place buy order: %w", err)
 		}
 
-		log.Printf("Trader %s: BUY order placed - OrderID: %s, Quantity: %.4f",
-			mt.ID, result["order_id"], order.Quantity)
+		log.Printf("Trader %s: BUY order placed - OrderID: %d, Quantity: %.4f",
+			mt.ID, result.OrderID, result.ExecutedQty)
 
 	case "sell", "short":
 		// Close existing long position or open short
@@ -391,16 +392,17 @@ func (mt *ManagedTrader) executeDecision(decision *decision.Decision, balance ma
 		// Check if we have a long position to close
 		hasLongPosition := false
 		for _, pos := range positions {
-			if pos["symbol"] == mt.Symbol && pos["side"] == "LONG" {
+			if pos.Symbol == mt.Symbol && pos.Side == trader.PositionSideLong {
 				hasLongPosition = true
 				// Close the position
-				order := &trader.Order{
-					Symbol: mt.Symbol,
-					Side:   "SELL",
-					Type:   "MARKET",
-					Quantity: pos["quantity"].(float64),
+				orderReq := &trader.OrderRequest{
+					Symbol:     mt.Symbol,
+					Side:       trader.OrderSideSell,
+					Type:       trader.OrderTypeMarket,
+					Quantity:   pos.Size,
+					ReduceOnly: true,
 				}
-				_, err := mt.Trader.PlaceOrder(ctx, order)
+				_, err := mt.Trader.PlaceOrder(ctx, orderReq)
 				if err != nil {
 					return fmt.Errorf("failed to close long position: %w", err)
 				}
@@ -420,20 +422,21 @@ func (mt *ManagedTrader) executeDecision(decision *decision.Decision, balance ma
 		}
 
 		for _, pos := range positions {
-			if pos["symbol"] == mt.Symbol {
-				side := "SELL"
-				if pos["side"] == "SHORT" {
-					side = "BUY"
+			if pos.Symbol == mt.Symbol {
+				side := trader.OrderSideSell
+				if pos.Side == trader.PositionSideShort {
+					side = trader.OrderSideBuy
 				}
 
-				order := &trader.Order{
-					Symbol:   mt.Symbol,
-					Side:     side,
-					Type:     "MARKET",
-					Quantity: pos["quantity"].(float64),
+				orderReq := &trader.OrderRequest{
+					Symbol:     mt.Symbol,
+					Side:       side,
+					Type:       trader.OrderTypeMarket,
+					Quantity:   pos.Size,
+					ReduceOnly: true,
 				}
 
-				_, err := mt.Trader.PlaceOrder(ctx, order)
+				_, err := mt.Trader.PlaceOrder(ctx, orderReq)
 				if err != nil {
 					log.Printf("Trader %s: Failed to close position: %v", mt.ID, err)
 				} else {
