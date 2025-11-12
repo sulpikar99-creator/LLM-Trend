@@ -16,7 +16,7 @@ export interface RegisterRequest {
   username: string
   email: string
   password: string
-  beta_code: string
+  beta_code?: string
 }
 
 export interface AuthResponse {

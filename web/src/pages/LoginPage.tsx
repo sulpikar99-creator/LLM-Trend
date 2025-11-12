@@ -21,7 +21,7 @@ const registerSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters'),
   email: z.string().email('Invalid email address'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
-  beta_code: z.string().min(1, 'Beta code is required'),
+  beta_code: z.string().optional(),
 })
 
 type LoginFormData = z.infer<typeof loginSchema>
@@ -206,8 +206,8 @@ export default function LoginPage() {
                 />
                 <Input
                   {...registerSignup('beta_code')}
-                  label="Beta Code"
-                  placeholder="Enter beta code"
+                  label="Beta Code (Optional)"
+                  placeholder="Enter beta code if you have one"
                   error={registerErrors.beta_code?.message}
                   disabled={isLoading}
                 />
