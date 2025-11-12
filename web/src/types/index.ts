@@ -117,6 +117,38 @@ export interface Config {
   default_strategy_prompt: string
 }
 
+// Decision types
+export interface AIDecision {
+  cycle_number: number
+  timestamp: string
+  decision: {
+    action: string
+    confidence: number
+    reasoning: string
+    entry_price?: number
+    stop_loss?: number
+    take_profit?: number
+    position_size_pct?: number
+    symbol?: string
+    leverage?: number
+  }
+  market_analysis?: {
+    price: number
+    trend: string
+    volatility: string
+    indicators: any
+  }
+  execution_logs?: any
+  error?: string
+}
+
+export interface DecisionResponse {
+  trader_id: string
+  decisions: AIDecision[]
+  count: number
+  total: number
+}
+
 // API Response types
 export interface ApiResponse<T> {
   success: boolean

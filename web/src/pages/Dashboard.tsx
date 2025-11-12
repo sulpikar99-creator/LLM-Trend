@@ -5,6 +5,7 @@ import { TrendingUp, TrendingDown, Bot, DollarSign, Activity, AlertCircle } from
 import { api } from '@/lib/api'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
+import { DecisionLog } from '@/components/DecisionLog'
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -159,6 +160,22 @@ export default function Dashboard() {
               </Card>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* AI Decision Log */}
+      {tradersData?.data && Array.isArray(tradersData.data) && tradersData.data.length > 0 && (
+        <div>
+          <h2 className="text-2xl font-bold mb-4">Recent AI Decisions</h2>
+          <DecisionLog
+            traderId={tradersData.data[0].id}
+            limit={5}
+          />
+          {tradersData.data.length > 1 && (
+            <p className="text-sm text-gray-500 mt-2 text-center">
+              Showing decisions from {tradersData.data[0].name}. Go to Traders page to see decisions for other traders.
+            </p>
+          )}
         </div>
       )}
     </div>

@@ -6,6 +6,7 @@ import type {
   Trader,
   CreateTraderRequest,
   Config,
+  DecisionResponse,
 } from '@/types'
 
 const API_BASE_URL = '/api'
@@ -145,6 +146,15 @@ class ApiClient {
       method: 'PUT',
       body: JSON.stringify(data),
     })
+  }
+
+  // Decision endpoints
+  async getDecisions(traderId: string, limit: number = 20): Promise<ApiResponse<DecisionResponse>> {
+    return this.request<DecisionResponse>(`/decisions/${traderId}?limit=${limit}`)
+  }
+
+  async getDecisionByCycle(traderId: string, cycle: number): Promise<ApiResponse<any>> {
+    return this.request<any>(`/decisions/${traderId}/${cycle}`)
   }
 
   // Health check
