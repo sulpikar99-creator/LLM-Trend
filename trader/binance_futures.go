@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -118,11 +119,20 @@ func (b *BinanceFuturesTrader) doRequest(ctx context.Context, method, endpoint s
 	}
 
 	reqURL := b.baseURL + endpoint
-	if method == http.MethodGet || method == http.MethodDelete {
-		reqURL += "?" + params.Encode()
+	var body io.Reader
+
+	switch method {
+	case http.MethodGet, http.MethodDelete:
+		if encoded := params.Encode(); encoded != "" {
+			reqURL += "?" + encoded
+		}
+	case http.MethodPost, http.MethodPut:
+		body = strings.NewReader(params.Encode())
+	default:
+		body = strings.NewReader(params.Encode())
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
