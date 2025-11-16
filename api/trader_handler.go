@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -10,23 +11,36 @@ import (
 	"github.com/sulpikar99-creator/LLM-Trend/trader"
 )
 
+// exchangeConfigPayload represents nested exchange configuration payloads from the frontend
+type exchangeConfigPayload struct {
+	APIKey    string `json:"api_key"`
+	APISecret string `json:"api_secret"`
+	Testnet   *bool  `json:"testnet"`
+}
+
 // CreateTraderRequest represents a request to create a trader
 type CreateTraderRequest struct {
-	Name          string `json:"name" binding:"required"`
-	ExchangeType  string `json:"exchange_type" binding:"required"`
-	Symbol        string `json:"symbol" binding:"required"`
-	Interval      string `json:"interval" binding:"required"`
-	APIKey        string `json:"api_key" binding:"required"`
-	APISecret     string `json:"api_secret" binding:"required"`
-	Testnet       bool   `json:"testnet"`
-	StrategyPrompt string `json:"strategy_prompt"`
+	Name           string                 `json:"name" binding:"required"`
+	ExchangeType   string                 `json:"exchange_type" binding:"required"`
+	APIKey         string                 `json:"api_key"`
+	APISecret      string                 `json:"api_secret"`
+	Testnet        *bool                  `json:"testnet"`
+	ExchangeConfig *exchangeConfigPayload `json:"exchange_config"`
+	Symbol         string                 `json:"symbol"`
+	Interval       string                 `json:"interval"`
+	StrategyPrompt string                 `json:"strategy_prompt"`
 }
 
 // StartTraderRequest represents a request to start a trader
 type StartTraderRequest struct {
-	Symbol   string `json:"symbol" binding:"required"`
-	Interval string `json:"interval" binding:"required"`
+	Symbol   string `json:"symbol"`
+	Interval string `json:"interval"`
 }
+
+const (
+	defaultStartSymbol   = "BTCUSDT"
+	defaultStartInterval = "1h"
+)
 
 // handleListTraders lists all traders for the authenticated user
 func (s *Server) handleListTraders(c *gin.Context) {
@@ -65,17 +79,41 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 		return
 	}
 
+	apiKey := req.APIKey
+	apiSecret := req.APISecret
+	if req.ExchangeConfig != nil {
+		if apiKey == "" {
+			apiKey = req.ExchangeConfig.APIKey
+		}
+		if apiSecret == "" {
+			apiSecret = req.ExchangeConfig.APISecret
+		}
+	}
+
+	if apiKey == "" || apiSecret == "" {
+		errorResponse(c, http.StatusBadRequest, "API key and secret are required")
+		return
+	}
+
+	testnet := false
+	if req.ExchangeConfig != nil && req.ExchangeConfig.Testnet != nil {
+		testnet = *req.ExchangeConfig.Testnet
+	}
+	if req.Testnet != nil {
+		testnet = *req.Testnet
+	}
+
 	// Generate trader ID
 	traderID := uuid.New().String()
 
 	// Encrypt API credentials
-	apiKeyEncrypted, err := s.app.CryptoService.EncryptAES(req.APIKey)
+	apiKeyEncrypted, err := s.app.CryptoService.EncryptAES(apiKey)
 	if err != nil {
 		errorResponse(c, http.StatusInternalServerError, "Failed to encrypt API key")
 		return
 	}
 
-	apiSecretEncrypted, err := s.app.CryptoService.EncryptAES(req.APISecret)
+	apiSecretEncrypted, err := s.app.CryptoService.EncryptAES(apiSecret)
 	if err != nil {
 		errorResponse(c, http.StatusInternalServerError, "Failed to encrypt API secret")
 		return
@@ -85,7 +123,7 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 	exchangeConfig := map[string]interface{}{
 		"api_key_encrypted":    apiKeyEncrypted,
 		"api_secret_encrypted": apiSecretEncrypted,
-		"testnet":              req.Testnet,
+		"testnet":              testnet,
 	}
 	exchangeConfigJSON, _ := json.Marshal(exchangeConfig)
 
@@ -111,24 +149,30 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 	var t trader.Trader
 	switch req.ExchangeType {
 	case "binance_futures":
-		t = trader.NewBinanceFuturesTrader(req.Name, req.APIKey, req.APISecret, req.Testnet)
+		t = trader.NewBinanceFuturesTrader(req.Name, apiKey, apiSecret, testnet)
 	default:
 		errorResponse(c, http.StatusBadRequest, "Unsupported exchange type: "+req.ExchangeType)
 		return
 	}
 
 	// Add to manager
-	_, err = s.app.TraderManager.AddTrader(traderID, userID, t)
+	mt, err := s.app.TraderManager.AddTrader(traderID, userID, t)
 	if err != nil {
 		errorResponse(c, http.StatusInternalServerError, "Failed to add trader to manager")
 		return
 	}
+
+	if req.Symbol != "" {
+		mt.Symbol = req.Symbol
+	}
+	mt.Testnet = testnet
 
 	successResponse(c, gin.H{
 		"trader_id": traderID,
 		"name":      req.Name,
 		"exchange":  req.ExchangeType,
 		"status":    "stopped",
+		"testnet":   testnet,
 		"message":   "Trader created successfully",
 	})
 }
@@ -289,8 +333,17 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 
 	var req StartTraderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		errorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
-		return
+		if err != io.EOF {
+			errorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+			return
+		}
+	}
+
+	if req.Symbol == "" {
+		req.Symbol = defaultStartSymbol
+	}
+	if req.Interval == "" {
+		req.Interval = defaultStartInterval
 	}
 
 	// Get trader from manager

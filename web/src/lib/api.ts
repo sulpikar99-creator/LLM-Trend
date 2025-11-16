@@ -77,9 +77,14 @@ export const api = {
   deleteTrader: (id: string) => fetchApi<any>(`/traders/${id}`, {
     method: 'DELETE',
   }),
-  startTrader: (id: string) => fetchApi<any>(`/traders/${id}/start`, {
-    method: 'POST',
-  }),
+  startTrader: (
+    id: string,
+    data?: { symbol?: string; interval?: string }
+  ) =>
+    fetchApi<any>(`/traders/${id}/start`, {
+      method: 'POST',
+      body: JSON.stringify(data ?? {}),
+    }),
   stopTrader: (id: string) => fetchApi<any>(`/traders/${id}/stop`, {
     method: 'POST',
   }),
